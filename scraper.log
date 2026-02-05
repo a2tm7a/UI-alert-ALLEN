@@ -1,0 +1,99 @@
+2026-02-05 11:06:37,843 - [INFO] - Database scraped_data.db initialized.
+2026-02-05 11:06:39,035 - [INFO] - Targeting: https://allen.in/
+2026-02-05 11:06:45,620 - [INFO] - Identified 3 tab states to process.
+2026-02-05 11:06:45,620 - [INFO] - Processing Tab: JEE
+2026-02-05 11:06:47,671 - [INFO] -   -> Found: JEE Nurture Online Course: Target 2028
+2026-02-05 11:06:50,875 - [INFO] -   -> Found: JEE Major Online Test Series: Target 2026
+2026-02-05 11:06:53,718 - [INFO] - Processing Tab: NEET
+2026-02-05 11:06:55,763 - [INFO] -   -> Found: NEET Enthusiast Online Course: Target 2027
+2026-02-05 11:06:59,616 - [INFO] -   -> Found: NEET Major Online Test Series: Target 2026
+2026-02-05 11:07:02,410 - [INFO] - Processing Tab: Classes 6-10
+2026-02-05 11:07:04,452 - [INFO] -   -> Found: 10th Board CBSE Online Course
+2026-02-05 11:07:07,274 - [INFO] -   -> Found: Foundation JEE & Olympiads Online Course
+2026-02-05 11:07:10,179 - [INFO] - Saved 6 new items to database.
+2026-02-05 11:07:28,128 - [INFO] - Database scraped_data.db initialized.
+2026-02-05 11:07:29,205 - [INFO] - Targeting: https://allen.in/
+2026-02-05 11:07:35,436 - [INFO] - Identified 3 tab states to process.
+2026-02-05 11:07:35,436 - [INFO] - Processing Tab: JEE
+2026-02-05 11:07:37,480 - [INFO] -   -> Found: JEE Nurture Online Course: Target 2028
+2026-02-05 11:07:40,505 - [INFO] -   -> Found: JEE Major Online Test Series: Target 2026
+2026-02-05 11:07:43,307 - [INFO] - Processing Tab: NEET
+2026-02-05 11:07:45,350 - [INFO] -   -> Found: NEET Enthusiast Online Course: Target 2027
+2026-02-05 11:07:48,206 - [INFO] -   -> Found: NEET Major Online Test Series: Target 2026
+2026-02-05 11:07:51,028 - [INFO] - Processing Tab: Classes 6-10
+2026-02-05 11:07:53,084 - [INFO] -   -> Found: 10th Board CBSE Online Course
+2026-02-05 11:07:56,563 - [INFO] -   -> Found: Foundation JEE & Olympiads Online Course
+2026-02-05 11:07:59,652 - [INFO] - Saved 0 new items to database.
+2026-02-05 11:08:28,706 - [INFO] - Database scraped_data.db initialized.
+2026-02-05 11:08:29,749 - [INFO] - Targeting: https://allen.in/
+2026-02-05 11:08:36,522 - [INFO] - Identified 3 tab states to process.
+2026-02-05 11:08:36,523 - [INFO] - Processing Tab: JEE
+2026-02-05 11:08:38,572 - [INFO] -   -> Found: JEE Nurture Online Course: Target 2028
+2026-02-05 11:08:41,434 - [INFO] -      URL: https://allen.in/jee/nurture-1-year-online-course
+2026-02-05 11:08:41,451 - [INFO] -   -> Found: JEE Major Online Test Series: Target 2026
+2026-02-05 11:08:44,252 - [INFO] -      URL: https://allen.in/jee/major-online-test-series-class-12
+2026-02-05 11:08:44,264 - [INFO] - Processing Tab: NEET
+2026-02-05 11:08:46,316 - [INFO] -   -> Found: NEET Enthusiast Online Course: Target 2027
+2026-02-05 11:08:49,126 - [INFO] -      URL: https://allen.in/neet/enthusiast-online-course-target-2027
+2026-02-05 11:08:49,145 - [INFO] -   -> Found: NEET Major Online Test Series: Target 2026
+2026-02-05 11:08:51,971 - [INFO] -      URL: https://allen.in/neet/major-online-test-series-class-12-plus
+2026-02-05 11:08:51,982 - [INFO] - Processing Tab: Classes 6-10
+2026-02-05 11:08:54,081 - [INFO] -   -> Found: 10th Board CBSE Online Course
+2026-02-05 11:08:56,924 - [INFO] -      URL: https://allen.in/class-10/cbse-concept-building-online-course
+2026-02-05 11:08:57,181 - [INFO] -   -> Found: Foundation JEE & Olympiads Online Course
+2026-02-05 11:09:00,677 - [INFO] -      URL: https://allen.in/class-9/jee-neet-foundation-with-olympiad-online-programs
+2026-02-05 11:09:00,689 - [INFO] - Saved 0 new items to database.
+2026-02-05 11:09:29,799 - [INFO] - Database scraped_data.db initialized.
+2026-02-05 11:09:30,906 - [INFO] - Targeting: https://allen.in/
+2026-02-05 11:09:37,340 - [INFO] - Identified 3 tab states to process.
+2026-02-05 11:09:37,341 - [INFO] - Processing Tab: JEE
+2026-02-05 11:09:39,400 - [INFO] -   -> Found: JEE Nurture Online Course: Target 2028
+2026-02-05 11:09:42,540 - [INFO] -      URL: https://allen.in/jee/nurture-1-year-online-course
+2026-02-05 11:09:42,561 - [INFO] -   -> Found: JEE Major Online Test Series: Target 2026
+2026-02-05 11:09:45,419 - [INFO] -      URL: https://allen.in/jee/major-online-test-series-class-12
+2026-02-05 11:09:45,430 - [INFO] - Processing Tab: NEET
+2026-02-05 11:09:47,480 - [INFO] -   -> Found: NEET Enthusiast Online Course: Target 2027
+2026-02-05 11:09:50,411 - [INFO] -      URL: https://allen.in/neet/enthusiast-online-course-target-2027
+2026-02-05 11:09:50,436 - [INFO] -   -> Found: NEET Major Online Test Series: Target 2026
+2026-02-05 11:09:53,491 - [INFO] -      URL: https://allen.in/neet/major-online-test-series-class-12-plus
+2026-02-05 11:09:53,515 - [INFO] - Processing Tab: Classes 6-10
+2026-02-05 11:09:55,603 - [INFO] -   -> Found: 10th Board CBSE Online Course
+2026-02-05 11:09:58,626 - [INFO] -      URL: https://allen.in/class-10/cbse-concept-building-online-course
+2026-02-05 11:09:58,681 - [INFO] -   -> Found: Foundation JEE & Olympiads Online Course
+2026-02-05 11:10:02,545 - [INFO] -      URL: https://allen.in/class-9/jee-neet-foundation-with-olympiad-online-programs
+2026-02-05 11:10:02,567 - [INFO] - Saved 0 new items to database.
+2026-02-05 11:11:23,623 - [INFO] - Using HomepageHandler for https://allen.in/
+2026-02-05 11:11:28,447 - [INFO] - --- Category: JEE ---
+2026-02-05 11:11:30,513 - [INFO] -   -> JEE Nurture Online Course: Target 2028
+2026-02-05 11:11:33,866 - [INFO] -      URL: https://allen.in/jee/nurture-1-year-online-course
+2026-02-05 11:11:33,885 - [INFO] -   -> JEE Major Online Test Series: Target 2026
+2026-02-05 11:11:36,911 - [INFO] -      URL: https://allen.in/jee/major-online-test-series-class-12
+2026-02-05 11:11:36,916 - [INFO] - Successfully saved 2 new courses.
+2026-02-05 11:11:36,916 - [INFO] - --- Category: NEET ---
+2026-02-05 11:11:38,987 - [INFO] -   -> NEET Enthusiast Online Course: Target 2027
+2026-02-05 11:11:42,181 - [INFO] -      URL: https://allen.in/neet/enthusiast-online-course-target-2027
+2026-02-05 11:11:42,201 - [INFO] -   -> NEET Major Online Test Series: Target 2026
+2026-02-05 11:11:45,368 - [INFO] -      URL: https://allen.in/neet/major-online-test-series-class-12-plus
+2026-02-05 11:11:45,371 - [INFO] - Successfully saved 2 new courses.
+2026-02-05 11:11:45,371 - [INFO] - --- Category: Classes 6-10 ---
+2026-02-05 11:11:47,425 - [INFO] -   -> 10th Board CBSE Online Course
+2026-02-05 11:11:50,443 - [INFO] -      URL: https://allen.in/class-10/cbse-concept-building-online-course
+2026-02-05 11:11:50,458 - [INFO] -   -> Foundation JEE & Olympiads Online Course
+2026-02-05 11:11:53,587 - [INFO] -      URL: https://allen.in/class-9/jee-neet-foundation-with-olympiad-online-programs
+2026-02-05 11:11:53,593 - [INFO] - Successfully saved 2 new courses.
+2026-02-05 11:12:34,717 - [INFO] - Using HomepageHandler for https://allen.in/
+2026-02-05 11:12:39,314 - [INFO] - --- Category: JEE ---
+2026-02-05 11:12:41,374 - [INFO] -   -> JEE Nurture Online Course: Target 2028
+2026-02-05 11:12:44,563 - [INFO] -      URL: https://allen.in/jee/nurture-1-year-online-course
+2026-02-05 11:12:44,575 - [INFO] -   -> JEE Major Online Test Series: Target 2026
+2026-02-05 11:12:47,487 - [INFO] -      URL: https://allen.in/jee/major-online-test-series-class-12
+2026-02-05 11:12:47,489 - [INFO] - --- Category: NEET ---
+2026-02-05 11:12:49,543 - [INFO] -   -> NEET Enthusiast Online Course: Target 2027
+2026-02-05 11:12:52,696 - [INFO] -      URL: https://allen.in/neet/enthusiast-online-course-target-2027
+2026-02-05 11:12:52,707 - [INFO] -   -> NEET Major Online Test Series: Target 2026
+2026-02-05 11:12:55,630 - [INFO] -      URL: https://allen.in/neet/major-online-test-series-class-12-plus
+2026-02-05 11:12:55,631 - [INFO] - --- Category: Classes 6-10 ---
+2026-02-05 11:12:57,686 - [INFO] -   -> 10th Board CBSE Online Course
+2026-02-05 11:13:00,631 - [INFO] -      URL: https://allen.in/class-10/cbse-concept-building-online-course
+2026-02-05 11:13:00,649 - [INFO] -   -> Foundation JEE & Olympiads Online Course
+2026-02-05 11:13:03,647 - [INFO] -      URL: https://allen.in/class-9/jee-neet-foundation-with-olympiad-online-programs
