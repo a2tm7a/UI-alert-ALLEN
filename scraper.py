@@ -27,6 +27,8 @@ class DatabaseManager:
                     course_name TEXT,
                     cta_link TEXT,
                     price TEXT,
+                    pdp_price TEXT,
+                    cta_status TEXT,
                     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
@@ -38,8 +40,10 @@ class DatabaseManager:
             for item in courses:
                 cursor.execute('SELECT id FROM courses WHERE course_name = ? AND cta_link = ?', (item['course_name'], item['cta_link']))
                 if not cursor.fetchone():
-                    cursor.execute('INSERT INTO courses (base_url, course_name, cta_link, price) VALUES (?, ?, ?, ?)',
-                                 (item['base_url'], item['course_name'], item['cta_link'], item['price']))
+                    cursor.execute('''
+                        INSERT INTO courses (base_url, course_name, cta_link, price, pdp_price, cta_status) 
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    ''', (item['base_url'], item['course_name'], item['cta_link'], item['price'], item.get('pdp_price', 'N/A'), item.get('cta_status', 'N/A')))
                     new_items += 1
             conn.commit()
             if new_items > 0:
@@ -110,6 +114,55 @@ class BasePageHandler(ABC):
                 logging.warning(f"Failed to capture link via click: {e}")
         return self.page.url
 
+    def verify_pdp(self, pdp_url, original_url):
+        """Navigates to the PDP and returns found price and CTA status."""
+        if not pdp_url or pdp_url == original_url:
+            return "N/A", "N/A"
+            
+        try:
+            logging.info(f"     Verifying PDP: {pdp_url}")
+            self.page.goto(pdp_url, wait_until="domcontentloaded", timeout=30000)
+            time.sleep(2)
+            
+            # Look for Price (₹ symbol)
+            pdp_price = "Not Found"
+            # Prioritize heading elements or common price locations
+            price_locators = [
+                'h2:has-text("₹")',
+                'span:has-text("₹")',
+                'p:has-text("₹")',
+                'div:has-text("₹")'
+            ]
+            for sel in price_locators:
+                loc = self.page.locator(sel)
+                for i in range(loc.count()):
+                    text = loc.nth(i).inner_text().strip()
+                    if '₹' in text and len(text) < 25:
+                        pdp_price = text
+                        break
+                if pdp_price != "Not Found": break
+                
+            # Look for CTA
+            cta_status = "Not Found"
+            cta_keywords = ["enroll now", "enrol now", "buy now"]
+            buttons = self.page.locator('button, a').all()
+            for btn in buttons:
+                try:
+                    text = btn.inner_text().strip().lower()
+                    if any(kw == text or (kw in text and len(text) < 20) for kw in cta_keywords):
+                        cta_status = f"Found ({btn.inner_text().strip()})"
+                        break
+                except: continue
+            
+            # Navigate back to original context
+            self.page.goto(original_url, wait_until="domcontentloaded")
+            return pdp_price, cta_status
+        except Exception as e:
+            logging.warning(f"     PDP verification failed: {e}")
+            try: self.page.goto(original_url, wait_until="domcontentloaded") # Attempt recovery
+            except: pass
+            return "Error", "Error"
+
 # --- SPECIALIZED HANDLER: Homepage ---
 class HomepageHandler(BasePageHandler):
     @staticmethod
@@ -148,10 +201,23 @@ class HomepageHandler(BasePageHandler):
 
                 logging.info(f"  -> {name}")
                 link = self.extract_cta_link(card, tab_el, tab_name)
-                logging.info(f"     URL: {link}")
+                logging.info(f"     Listing URL: {link}")
                 
+                # Verify PDP
+                pdp_price, cta_status = self.verify_pdp(link, url)
+                if tab_el: # Restore tab state
+                    tab_el.evaluate("el => el.click()")
+                    time.sleep(1)
+                
+                logging.info(f"     PDP Price: {pdp_price} | CTA: {cta_status}")
+
                 scraped_batch.append({
-                    "base_url": url, "course_name": name, "cta_link": link, "price": "Contact for Price"
+                    "base_url": url, 
+                    "course_name": name, 
+                    "cta_link": link, 
+                    "price": self.safe_get_text(card, ['[class*="price"]', '[class*="fee"]']),
+                    "pdp_price": pdp_price,
+                    "cta_status": cta_status
                 })
             
             self.db.save_batch(scraped_batch)
@@ -160,7 +226,7 @@ class HomepageHandler(BasePageHandler):
 class CourseDetailsHandler(BasePageHandler):
     @staticmethod
     def can_handle(url):
-        return "/online-coaching-" in url or "/neet/" in url and url.strip('/') != "https://allen.in"
+        return "/online-coaching-" in url or ("/neet/" in url and url.strip('/') != "https://allen.in")
 
     def scrape(self, url):
         logging.info(f"Using CourseDetailsHandler for {url}")
@@ -192,10 +258,23 @@ class CourseDetailsHandler(BasePageHandler):
 
                 logging.info(f"  -> {name}")
                 link = self.extract_cta_link(card, pill, pill_name)
-                logging.info(f"     URL: {link}")
+                logging.info(f"     Listing URL: {link}")
+
+                # Verify PDP
+                pdp_price, cta_status = self.verify_pdp(link, url)
+                if pill: # Restore pill state
+                    pill.evaluate("el => el.click()")
+                    time.sleep(1)
+                
+                logging.info(f"     PDP Price: {pdp_price} | CTA: {cta_status}")
 
                 scraped_batch.append({
-                    "base_url": url, "course_name": name, "cta_link": link, "price": "Check Site"
+                    "base_url": url, 
+                    "course_name": name, 
+                    "cta_link": link, 
+                    "price": self.safe_get_text(card, ['[class*="price"]', '[class*="fee"]']),
+                    "pdp_price": pdp_price,
+                    "cta_status": cta_status
                 })
             
             self.db.save_batch(scraped_batch)
