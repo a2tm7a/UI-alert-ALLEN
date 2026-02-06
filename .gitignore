@@ -2,3 +2,6 @@ scraped_data.db
 dump.html
 debug*
 scraper.log
+__pycache__/
+*.pyc
+*.pyo

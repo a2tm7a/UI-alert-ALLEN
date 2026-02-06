@@ -29,6 +29,8 @@ class DatabaseManager:
                     price TEXT,
                     pdp_price TEXT,
                     cta_status TEXT,
+                    is_broken INTEGER DEFAULT 0,
+                    price_mismatch INTEGER DEFAULT 0,
                     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
@@ -41,9 +43,18 @@ class DatabaseManager:
                 cursor.execute('SELECT id FROM courses WHERE course_name = ? AND cta_link = ?', (item['course_name'], item['cta_link']))
                 if not cursor.fetchone():
                     cursor.execute('''
-                        INSERT INTO courses (base_url, course_name, cta_link, price, pdp_price, cta_status) 
-                        VALUES (?, ?, ?, ?, ?, ?)
-                    ''', (item['base_url'], item['course_name'], item['cta_link'], item['price'], item.get('pdp_price', 'N/A'), item.get('cta_status', 'N/A')))
+                        INSERT INTO courses (base_url, course_name, cta_link, price, pdp_price, cta_status, is_broken, price_mismatch) 
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (
+                        item['base_url'], 
+                        item['course_name'], 
+                        item['cta_link'], 
+                        item['price'], 
+                        item.get('pdp_price', 'N/A'), 
+                        item.get('cta_status', 'N/A'),
+                        item.get('is_broken', 0),
+                        item.get('price_mismatch', 0)
+                    ))
                     new_items += 1
             conn.commit()
             if new_items > 0:
@@ -57,6 +68,14 @@ class BasePageHandler(ABC):
         self.page = page
         self.db = db_manager
         self.processed_keys = set()
+
+    def clean_price(self, price_str):
+        """Extracts numeric value from price strings (e.g., '₹ 93,500' -> '93500')."""
+        if not price_str or "N/A" in price_str or "Not Found" in price_str:
+            return None
+        # Extract only digits
+        nums = "".join(re.findall(r'\d+', price_str.replace(',', '')))
+        return nums if nums else None
 
     @abstractmethod
     def can_handle(url: str) -> bool:
@@ -114,25 +133,23 @@ class BasePageHandler(ABC):
                 logging.warning(f"Failed to capture link via click: {e}")
         return self.page.url
 
-    def verify_pdp(self, pdp_url, original_url):
-        """Navigates to the PDP and returns found price and CTA status."""
+    def verify_pdp(self, pdp_url, original_url, card_price=None):
+        """Navigates to the PDP and returns found price, CTA status, and verification flags."""
         if not pdp_url or pdp_url == original_url:
-            return "N/A", "N/A"
+            return "N/A", "N/A", 1, 0  # Broken if it didn't lead to a new page
             
         try:
             logging.info(f"     Verifying PDP: {pdp_url}")
             self.page.goto(pdp_url, wait_until="domcontentloaded", timeout=30000)
             time.sleep(2)
             
-            # Look for Price (₹ symbol)
+            # 1. Check if broken (did we actually navigate away from the list?)
+            # If current URL is still the list URL (with maybe just a # anchor), it's potentially broken
+            is_broken = 1 if self.page.url.strip('/') == original_url.strip('/') else 0
+
+            # 2. Look for Price (₹ symbol)
             pdp_price = "Not Found"
-            # Prioritize heading elements or common price locations
-            price_locators = [
-                'h2:has-text("₹")',
-                'span:has-text("₹")',
-                'p:has-text("₹")',
-                'div:has-text("₹")'
-            ]
+            price_locators = ['h2:has-text("₹")', 'span:has-text("₹")', 'p:has-text("₹")', 'div:has-text("₹")']
             for sel in price_locators:
                 loc = self.page.locator(sel)
                 for i in range(loc.count()):
@@ -141,8 +158,17 @@ class BasePageHandler(ABC):
                         pdp_price = text
                         break
                 if pdp_price != "Not Found": break
+            
+            # 3. Price Mismatch Check
+            price_mismatch = 0
+            if card_price and pdp_price != "Not Found":
+                c_price = self.clean_price(card_price)
+                p_price = self.clean_price(pdp_price)
+                if c_price and p_price and c_price != p_price:
+                    price_mismatch = 1
+                    logging.warning(f"     [FLAG] Price mismatch: Card={card_price} vs PDP={pdp_price}")
                 
-            # Look for CTA
+            # 4. Look for CTA
             cta_status = "Not Found"
             cta_keywords = ["enroll now", "enrol now", "buy now"]
             buttons = self.page.locator('button, a').all()
@@ -156,12 +182,12 @@ class BasePageHandler(ABC):
             
             # Navigate back to original context
             self.page.goto(original_url, wait_until="domcontentloaded")
-            return pdp_price, cta_status
+            return pdp_price, cta_status, is_broken, price_mismatch
         except Exception as e:
             logging.warning(f"     PDP verification failed: {e}")
-            try: self.page.goto(original_url, wait_until="domcontentloaded") # Attempt recovery
+            try: self.page.goto(original_url, wait_until="domcontentloaded")
             except: pass
-            return "Error", "Error"
+            return "Error", "Error", 1, 0
 
 # --- SPECIALIZED HANDLER: Homepage ---
 class HomepageHandler(BasePageHandler):
@@ -205,21 +231,25 @@ class HomepageHandler(BasePageHandler):
                 self.processed_keys.add(f"{tab_name}_{name}")
 
                 logging.info(f"  -> {name}")
+                card_price = self.safe_get_text(card, ['[class*="price"]', '[class*="fee"]', 'h3'])
                 link = self.extract_cta_link(card, tab_el, tab_name)
                 logging.info(f"     Listing URL: {link}")
                 
                 # Verify PDP
-                pdp_price, cta_status = self.verify_pdp(link, url)
+                pdp_price, cta_status, is_broken, mismatch = self.verify_pdp(link, url, card_price)
                 
                 logging.info(f"     PDP Price: {pdp_price} | CTA: {cta_status}")
+                if is_broken: logging.warning(f"     [FLAG] Broken Link: {link}")
 
                 scraped_batch.append({
                     "base_url": url, 
                     "course_name": name, 
                     "cta_link": link, 
-                    "price": self.safe_get_text(card, ['[class*="price"]', '[class*="fee"]']),
+                    "price": card_price,
                     "pdp_price": pdp_price,
-                    "cta_status": cta_status
+                    "cta_status": cta_status,
+                    "is_broken": is_broken,
+                    "price_mismatch": mismatch
                 })
             
             self.db.save_batch(scraped_batch)
@@ -271,21 +301,95 @@ class PLPHandler(BasePageHandler):
                 self.processed_keys.add(f"{pill_name}_{name}")
 
                 logging.info(f"  -> {name}")
+                card_price = self.safe_get_text(card, ['[class*="price"]', '[class*="fee"]', 'h3'])
                 link = self.extract_cta_link(card, active_pill, pill_name)
                 logging.info(f"     Listing URL: {link}")
 
                 # Verify PDP
-                pdp_price, cta_status = self.verify_pdp(link, url)
+                pdp_price, cta_status, is_broken, mismatch = self.verify_pdp(link, url, card_price)
                 
                 logging.info(f"     PDP Price: {pdp_price} | CTA: {cta_status}")
+                if is_broken: logging.warning(f"     [FLAG] Broken Link: {link}")
 
                 scraped_batch.append({
                     "base_url": url, 
                     "course_name": name, 
                     "cta_link": link, 
-                    "price": self.safe_get_text(card, ['[class*="price"]', '[class*="fee"]']),
+                    "price": card_price,
                     "pdp_price": pdp_price,
-                    "cta_status": cta_status
+                    "cta_status": cta_status,
+                    "is_broken": is_broken,
+                    "price_mismatch": mismatch
+                })
+            
+            self.db.save_batch(scraped_batch)
+
+# --- SPECIALIZED HANDLER: Stream Page (e.g., International Olympiads) ---
+class StreamHandler(BasePageHandler):
+    @staticmethod
+    def can_handle(url):
+        return "/international-olympiads" in url
+
+    def scrape(self, url):
+        logging.info(f"Using StreamHandler for {url}")
+        self.page.goto(url, wait_until="domcontentloaded")
+        time.sleep(3)
+
+        # Identify Class Tabs (Class 8, Class 9, etc.)
+        tab_loc = self.page.locator('button, div').filter(has_text=re.compile(r'^Class \d+$'))
+        tab_count = tab_loc.count()
+        tabs_info = []
+        for i in range(tab_count):
+            txt = tab_loc.nth(i).inner_text().strip()
+            if txt and txt not in tabs_info:
+                tabs_info.append(txt)
+
+        for t_idx in range(max(1, len(tabs_info))):
+            tab_name = tabs_info[t_idx] if tabs_info else "Default"
+            logging.info(f"--- Stream Category: {tab_name} ---")
+            
+            active_tab = None
+            if tabs_info:
+                # Find all potential tabs and select the one matching the name
+                active_tab = self.page.locator('button, div').filter(has_text=tab_name).first
+                active_tab.evaluate("el => el.click()")
+                time.sleep(2)
+
+            # Stream page cards: searching for li with p (title) and h3 (price)
+            cards = self.page.locator('li').filter(has=self.page.locator('p')).filter(has=self.page.locator('h3'))
+            scraped_batch = []
+
+            for i in range(cards.count()):
+                if active_tab:
+                    active_tab.evaluate("el => el.click()")
+                    time.sleep(1)
+
+                card = cards.nth(i)
+                card.scroll_into_view_if_needed()
+                
+                name = self.safe_get_text(card, ['p', 'h2'])
+                
+                if name == "N/A" or f"{tab_name}_{name}" in self.processed_keys: continue
+                self.processed_keys.add(f"{tab_name}_{name}")
+
+                logging.info(f"  -> {name}")
+                card_price = self.safe_get_text(card, ['h3', '[class*="price"]'])
+                link = self.extract_cta_link(card, active_tab, tab_name)
+                logging.info(f"     Listing URL: {link}")
+
+                pdp_price, cta_status, is_broken, mismatch = self.verify_pdp(link, url, card_price)
+                logging.info(f"     PDP Price: {pdp_price} | CTA: {cta_status}")
+                if is_broken: logging.warning(f"     [FLAG] Broken Link: {link}")
+
+                scraped_batch.append({
+                    "base_url": url, 
+                    "course_name": name, 
+                    "cta_link": link, 
+                    "price": card_price,
+                    "pdp_price": pdp_price,
+                    "cta_status": cta_status,
+                    "is_broken": is_broken,
+                    "price_mismatch": mismatch
                 })
             
             self.db.save_batch(scraped_batch)
@@ -298,7 +402,8 @@ class ScraperEngine:
         # Mapping tags in urls.txt to Handler classes
         self.handler_map = {
             "HOME": HomepageHandler,
-            "PLP_PAGES": PLPHandler
+            "PLP_PAGES": PLPHandler,
+            "STREAM_PAGES": StreamHandler
         }
 
     def parse_urls(self):
@@ -352,6 +457,15 @@ class ScraperEngine:
                     logging.warning(f"No handler registered for tag: [{tag}]")
 
             browser.close()
+        
+        # Run validation using the new modular system
+        logging.info("")
+        logging.info("Running validation checks...")
+        from validation_service import ValidationService
+        
+        validator = ValidationService(self.db.db_name)
+        validator.validate_all_courses()
+        validator.log_results()
 
 if __name__ == "__main__":
     engine = ScraperEngine()

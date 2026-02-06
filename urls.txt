@@ -3,3 +3,6 @@ https://allen.in/
 
 [PLP_PAGES]
 https://allen.in/neet/online-coaching-class-11
+
+[STREAM_PAGES]
+https://allen.in/international-olympiads
