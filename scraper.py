@@ -224,14 +224,14 @@ class HomepageHandler(BasePageHandler):
             
             self.db.save_batch(scraped_batch)
 
-# --- SPECIALIZED HANDLER: Course Details Page ---
-class CourseDetailsHandler(BasePageHandler):
+# --- SPECIALIZED HANDLER: PLP Page (Product Listing Page) ---
+class PLPHandler(BasePageHandler):
     @staticmethod
     def can_handle(url):
         return "/online-coaching-" in url or ("/neet/" in url and url.strip('/') != "https://allen.in")
 
     def scrape(self, url):
-        logging.info(f"Using CourseDetailsHandler for {url}")
+        logging.info(f"Using PLPHandler for {url}")
         self.page.goto(url, wait_until="domcontentloaded")
         time.sleep(3)
 
@@ -298,7 +298,7 @@ class ScraperEngine:
         # Mapping tags in urls.txt to Handler classes
         self.handler_map = {
             "HOME": HomepageHandler,
-            "COURSE_LIST": CourseDetailsHandler
+            "PLP_PAGES": PLPHandler
         }
 
     def parse_urls(self):
