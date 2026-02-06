@@ -193,6 +193,11 @@ class HomepageHandler(BasePageHandler):
             scraped_batch = []
             
             for i in range(cards.count()):
+                # Re-verify filter state before each card to handle SPA resets
+                if tab_el:
+                    tab_el.evaluate("el => el.click()")
+                    time.sleep(1)
+
                 card = cards.nth(i)
                 name = self.safe_get_text(card, ['h2', 'p.font-semibold'])
                 
@@ -205,9 +210,6 @@ class HomepageHandler(BasePageHandler):
                 
                 # Verify PDP
                 pdp_price, cta_status = self.verify_pdp(link, url)
-                if tab_el: # Restore tab state
-                    tab_el.evaluate("el => el.click()")
-                    time.sleep(1)
                 
                 logging.info(f"     PDP Price: {pdp_price} | CTA: {cta_status}")
 
@@ -234,15 +236,22 @@ class CourseDetailsHandler(BasePageHandler):
         time.sleep(3)
 
         # Filters/Pills (Live, Recorded)
-        pills = self.page.locator('button').filter(
+        pills_loc = self.page.locator('button').filter(
             has_text=re.compile(r'^(Live|Recorded|Online Test Series|Offline Test Series)$')
-        ).all()
+        )
+        pill_count = pills_loc.count()
+        pills_info = []
+        for i in range(pill_count):
+            pills_info.append(pills_loc.nth(i).inner_text().strip())
 
-        for pill in (pills if pills else [None]):
-            pill_name = pill.inner_text().strip() if pill else "Default"
+        for p_idx in range(max(1, pill_count)):
+            pill_name = pills_info[p_idx] if pills_info else "Default"
             logging.info(f"--- Filter: {pill_name} ---")
-            if pill:
-                pill.evaluate("el => el.click()")
+            
+            # Re-select the pill by index to avoid stale element issues
+            active_pill = pills_loc.nth(p_idx) if pills_info else None
+            if active_pill:
+                active_pill.evaluate("el => el.click()")
                 time.sleep(2)
 
             # Details page cards are li-based
@@ -250,6 +259,11 @@ class CourseDetailsHandler(BasePageHandler):
             scraped_batch = []
 
             for i in range(cards.count()):
+                # Crucial: Re-apply filter before each card processing to handle SPA page resets
+                if active_pill:
+                    active_pill.evaluate("el => el.click()")
+                    time.sleep(1)
+
                 card = cards.nth(i)
                 name = self.safe_get_text(card, ['p.font-semibold', 'h2', 'p'])
                 
@@ -257,14 +271,11 @@ class CourseDetailsHandler(BasePageHandler):
                 self.processed_keys.add(f"{pill_name}_{name}")
 
                 logging.info(f"  -> {name}")
-                link = self.extract_cta_link(card, pill, pill_name)
+                link = self.extract_cta_link(card, active_pill, pill_name)
                 logging.info(f"     Listing URL: {link}")
 
                 # Verify PDP
                 pdp_price, cta_status = self.verify_pdp(link, url)
-                if pill: # Restore pill state
-                    pill.evaluate("el => el.click()")
-                    time.sleep(1)
                 
                 logging.info(f"     PDP Price: {pdp_price} | CTA: {cta_status}")
 
@@ -284,37 +295,61 @@ class ScraperEngine:
     def __init__(self, urls_file="urls.txt"):
         self.urls_file = urls_file
         self.db = DatabaseManager()
-        self.handlers = [HomepageHandler, CourseDetailsHandler] # Order matters
+        # Mapping tags in urls.txt to Handler classes
+        self.handler_map = {
+            "HOME": HomepageHandler,
+            "COURSE_LIST": CourseDetailsHandler
+        }
 
-    def run(self):
+    def parse_urls(self):
+        """Parses urls.txt into a list of (type, url) tuples."""
+        tasks = []
+        current_type = None
+        
         if not os.path.exists(self.urls_file):
             logging.error(f"URL file {self.urls_file} missing.")
-            return
+            return []
 
         with open(self.urls_file, "r") as f:
-            urls = [line.strip() for line in f if line.strip()]
+            for line in f:
+                line = line.strip()
+                if not line: continue
+                
+                # Check for section header [TYPE]
+                header_match = re.match(r'^\[(.*?)\]$', line)
+                if header_match:
+                    current_type = header_match.group(1).upper()
+                elif line.startswith('http'):
+                    if current_type:
+                        tasks.append((current_type, line))
+                    else:
+                        logging.warning(f"URL found without category: {line}")
+        return tasks
+
+    def run(self):
+        tasks = self.parse_urls()
+        if not tasks:
+            logging.warning("No scraping tasks found.")
+            return
 
         with sync_playwright() as p:
+            # We preserve the browser/page context across tasks for efficiency
             browser = p.chromium.launch(headless=True)
             page = browser.new_page()
             page.set_viewport_size({"width": 1920, "height": 1080})
 
-            for url in urls:
-                # Dispatcher: Select the correct handler
-                handler_class = None
-                for hc in self.handlers:
-                    if hc.can_handle(url):
-                        handler_class = hc
-                        break
+            for tag, url in tasks:
+                handler_class = self.handler_map.get(tag)
                 
                 if handler_class:
+                    logging.info(f"Starting Task: {tag} -> {url}")
                     handler = handler_class(page, self.db)
                     try:
                         handler.scrape(url)
                     except Exception as e:
-                        logging.error(f"Error scraping {url}: {e}")
+                        logging.error(f"Error scraping {url} with {tag}: {e}")
                 else:
-                    logging.warning(f"No handler found for URL: {url}")
+                    logging.warning(f"No handler registered for tag: [{tag}]")
 
             browser.close()
 

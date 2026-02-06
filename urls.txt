@@ -1,1 +1,5 @@
+[HOME]
 https://allen.in/
+
+[COURSE_LIST]
+https://allen.in/neet/online-coaching-class-11
