@@ -193,13 +193,15 @@ class BasePageHandler(ABC):
                     logging.warning(f"     [FLAG] Price mismatch: Card={card_price} vs PDP={pdp_price}")
                 
             # 4. Look for CTA
+            # Desktop PDPs: "Enroll Now" / "Buy Now" buttons.
+            # Mobile PDPs:  sticky bottom bar with "Select batch and enroll".
             cta_status = "Not Found"
-            cta_keywords = ["enroll now", "enrol now", "buy now"]
+            cta_keywords = ["enroll now", "enrol now", "buy now", "select batch"]
             buttons = self.page.locator('button, a').all()
             for btn in buttons:
                 try:
                     text = btn.inner_text().strip().lower()
-                    if any(kw == text or (kw in text and len(text) < 20) for kw in cta_keywords):
+                    if any(kw == text or (kw in text and len(text) < 40) for kw in cta_keywords):
                         cta_status = f"Found ({btn.inner_text().strip()})"
                         break
                 except Exception:
