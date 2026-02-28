@@ -200,18 +200,19 @@ class ReportGenerator:
                 "",
                 f"### {issue_type.replace('_', ' ').title()} ({len(type_issues)})",
                 "",
-                "| Course | Viewport | Field | Expected | Actual |",
-                "|--------|----------|-------|----------|--------|",
+                "| Course | URL | Viewport | Field | Expected | Actual |",
+                "|--------|-----|----------|-------|----------|--------|",
             ]
             for issue in type_issues:
                 # Viewport is embedded in course_data when the validator runs;
                 # fall back gracefully if not present
                 viewport = getattr(issue, "viewport", "—")
+                url = getattr(issue, "base_url", "—")
                 expected = str(issue.expected or "—").replace("|", "\\|")
                 actual = str(issue.actual or "—").replace("|", "\\|")
                 field = issue.field or "—"
                 lines.append(
-                    f"| {issue.course_name} | {viewport} | {field} | {expected} | {actual} |"
+                    f"| {issue.course_name} | {url} | {viewport} | {field} | {expected} | {actual} |"
                 )
 
         return "\n".join(lines)
