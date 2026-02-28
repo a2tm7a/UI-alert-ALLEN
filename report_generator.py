@@ -208,14 +208,12 @@ class ReportGenerator:
                         COUNT(*)                                                        AS courses,
                         SUM(is_broken)                                                  AS broken,
                         SUM(price_mismatch)                                             AS price_mismatch,
-                        -- price_missing: PDP price unavailable (scraper couldn't find it)
+                        -- price_missing: PDP price unavailable
                         SUM(CASE WHEN pdp_price IN ('Not Found','N/A','Error','')
                                   OR pdp_price IS NULL                  THEN 1 ELSE 0 END) AS price_missing,
-                        -- price_correct: both prices present and matching
-                        SUM(CASE WHEN pdp_price NOT IN ('Not Found','N/A','Error','')
-                                  AND pdp_price IS NOT NULL
-                                  AND price    NOT IN ('N/A','Error','')
-                                  AND price    IS NOT NULL
+                        -- price_correct: PDP price found and no mismatch (card may or may not show price)
+                        SUM(CASE WHEN (pdp_price NOT IN ('Not Found','N/A','Error','')
+                                  AND pdp_price IS NOT NULL)
                                   AND price_mismatch = 0               THEN 1 ELSE 0 END) AS price_correct,
                         SUM(CASE WHEN cta_status LIKE 'Found%' THEN 1 ELSE 0 END)      AS cta_found,
                         SUM(CASE WHEN cta_status = 'Not Found' THEN 1 ELSE 0 END)      AS cta_missing
