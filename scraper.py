@@ -194,7 +194,13 @@ class BasePageHandler(ABC):
                 
             # 4. Look for CTA
             # Desktop PDPs: "Enroll Now" / "Buy Now" buttons.
-            # Mobile PDPs:  sticky bottom bar with "Select batch and enroll".
+            # Mobile PDPs:  sticky bottom bar ("Select batch and enroll") that is
+            #               only injected into the DOM after the page is scrolled.
+            # Scroll to bottom first so the sticky element is triggered, then wait
+            # briefly for it to render before querying.
+            self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            self.page.wait_for_timeout(1500)
+
             cta_status = "Not Found"
             cta_keywords = ["enroll now", "enrol now", "buy now", "select batch"]
             buttons = self.page.locator('button, a').all()
