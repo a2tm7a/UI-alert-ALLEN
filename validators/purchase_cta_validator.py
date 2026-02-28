@@ -11,7 +11,7 @@ from typing import Dict, List, Any
 from .base_validator import BaseValidator, ValidationResult
 
 
-class CTAValidator(BaseValidator):
+class PurchaseCTAValidator(BaseValidator):
     """
     Unified validator for the course purchase flow.
 

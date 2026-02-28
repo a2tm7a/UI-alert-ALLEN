@@ -6,7 +6,7 @@ Orchestrates validation rules and manages validation results.
 import sqlite3
 import logging
 from typing import List, Dict, Any
-from validators import BaseValidator, ValidationResult, CTAValidator, PriceMismatchValidator
+from validators import BaseValidator, ValidationResult, PurchaseCTAValidator, PriceMismatchValidator
 
 
 class ValidationService:
@@ -25,7 +25,7 @@ class ValidationService:
         Build the default chain of validators.
         Can be overridden or configured externally in future phases.
         """
-        cta = CTAValidator()
+        cta = PurchaseCTAValidator()
         price_mismatch = PriceMismatchValidator()
 
         # CTA check runs first — if a course is completely unreachable,
