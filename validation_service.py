@@ -6,7 +6,7 @@ Orchestrates validation rules and manages validation results.
 import sqlite3
 import logging
 from typing import List, Dict, Any
-from validators import BaseValidator, ValidationResult, BrokenLinkValidator, PriceMismatchValidator
+from validators import BaseValidator, ValidationResult, CTAValidator, PriceMismatchValidator
 
 
 class ValidationService:
@@ -25,14 +25,14 @@ class ValidationService:
         Build the default chain of validators.
         Can be overridden or configured externally in future phases.
         """
-        # Create validators
-        broken_link = BrokenLinkValidator()
+        cta = CTAValidator()
         price_mismatch = PriceMismatchValidator()
-        
-        # Chain them together
-        broken_link.set_next(price_mismatch)
-        
-        return broken_link
+
+        # CTA check runs first — if a course is completely unreachable,
+        # we still want price mismatch checked independently.
+        cta.set_next(price_mismatch)
+
+        return cta
     
     def validate_course(self, course_data: Dict[str, Any]) -> List[ValidationResult]:
         """
