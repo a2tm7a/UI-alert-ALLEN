@@ -59,10 +59,14 @@ class ValidationService:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM courses")
-            
+
             for row in cursor.fetchall():
                 course_data = dict(row)
                 issues = self.validate_course(course_data)
+                # Stamp each result with the viewport from its DB row
+                viewport = course_data.get('viewport', 'desktop')
+                for issue in issues:
+                    issue.viewport = viewport
                 all_issues.extend(issues)
         
         self.validation_results = all_issues

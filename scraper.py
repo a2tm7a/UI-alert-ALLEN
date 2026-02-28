@@ -4,8 +4,14 @@ import re
 import logging
 import time
 from abc import ABC, abstractmethod
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 from playwright.sync_api import sync_playwright
 from validation_service import ValidationService
+from report_generator import ReportGenerator
+
+# iPhone XR — logical resolution 390×844, touch, mobile Safari user-agent
+MOBILE_DEVICE = "iPhone XR"
 
 # --- LOGGING & DATABASE SETUP ---
 logging.basicConfig(
@@ -21,6 +27,8 @@ class DatabaseManager:
 
     def _init_db(self):
         with sqlite3.connect(self.db_name) as conn:
+            # WAL mode allows concurrent reads while a write is in progress
+            conn.execute("PRAGMA journal_mode=WAL")
             conn.execute('''
                 CREATE TABLE IF NOT EXISTS courses (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -32,42 +40,57 @@ class DatabaseManager:
                     cta_status TEXT,
                     is_broken INTEGER DEFAULT 0,
                     price_mismatch INTEGER DEFAULT 0,
+                    viewport TEXT DEFAULT 'desktop',
                     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
+            # Migration guard for existing DBs that pre-date this column
+            try:
+                conn.execute("ALTER TABLE courses ADD COLUMN viewport TEXT DEFAULT 'desktop'")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
 
     def save_batch(self, courses):
-        with sqlite3.connect(self.db_name) as conn:
+        # timeout=30 ensures threads wait for the write lock instead of crashing
+        with sqlite3.connect(self.db_name, timeout=30) as conn:
             cursor = conn.cursor()
             new_items = 0
             for item in courses:
-                cursor.execute('SELECT id FROM courses WHERE course_name = ? AND cta_link = ?', (item['course_name'], item['cta_link']))
+                viewport = item.get('viewport', 'desktop')
+                # Dedup is scoped per viewport — same course on desktop vs mobile = 2 rows
+                cursor.execute(
+                    'SELECT id FROM courses WHERE course_name = ? AND cta_link = ? AND viewport = ?',
+                    (item['course_name'], item['cta_link'], viewport)
+                )
                 if not cursor.fetchone():
                     cursor.execute('''
-                        INSERT INTO courses (base_url, course_name, cta_link, price, pdp_price, cta_status, is_broken, price_mismatch) 
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        INSERT INTO courses
+                            (base_url, course_name, cta_link, price, pdp_price, cta_status, is_broken, price_mismatch, viewport)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ''', (
-                        item['base_url'], 
-                        item['course_name'], 
-                        item['cta_link'], 
-                        item['price'], 
-                        item.get('pdp_price', 'N/A'), 
+                        item['base_url'],
+                        item['course_name'],
+                        item['cta_link'],
+                        item['price'],
+                        item.get('pdp_price', 'N/A'),
                         item.get('cta_status', 'N/A'),
                         item.get('is_broken', 0),
-                        item.get('price_mismatch', 0)
+                        item.get('price_mismatch', 0),
+                        viewport
                     ))
                     new_items += 1
             conn.commit()
             if new_items > 0:
-                logging.info(f"Successfully saved {new_items} new courses.")
+                logging.info(f"[{viewport}] Successfully saved {new_items} new courses.")
 
 # --- BASE HANDLER STRATEGY ---
 class BasePageHandler(ABC):
     """Abstract base class for all page-specific scraping logic."""
-    
-    def __init__(self, page, db_manager):
+
+    def __init__(self, page, db_manager, viewport: str = 'desktop'):
         self.page = page
         self.db = db_manager
+        self.viewport = viewport  # 'desktop' | 'mobile'
         self.processed_keys = set()
 
     def clean_price(self, price_str):
@@ -244,16 +267,17 @@ class HomepageHandler(BasePageHandler):
                 if is_broken: logging.warning(f"     [FLAG] Broken Link: {link}")
 
                 scraped_batch.append({
-                    "base_url": url, 
-                    "course_name": name, 
-                    "cta_link": link, 
+                    "base_url": url,
+                    "course_name": name,
+                    "cta_link": link,
                     "price": card_price,
                     "pdp_price": pdp_price,
                     "cta_status": cta_status,
                     "is_broken": is_broken,
-                    "price_mismatch": mismatch
+                    "price_mismatch": mismatch,
+                    "viewport": self.viewport
                 })
-            
+
             self.db.save_batch(scraped_batch)
 
 # --- SPECIALIZED HANDLER: PLP Page (Product Listing Page) ---
@@ -314,16 +338,17 @@ class PLPHandler(BasePageHandler):
                 if is_broken: logging.warning(f"     [FLAG] Broken Link: {link}")
 
                 scraped_batch.append({
-                    "base_url": url, 
-                    "course_name": name, 
-                    "cta_link": link, 
+                    "base_url": url,
+                    "course_name": name,
+                    "cta_link": link,
                     "price": card_price,
                     "pdp_price": pdp_price,
                     "cta_status": cta_status,
                     "is_broken": is_broken,
-                    "price_mismatch": mismatch
+                    "price_mismatch": mismatch,
+                    "viewport": self.viewport
                 })
-            
+
             self.db.save_batch(scraped_batch)
 
 # --- SPECIALIZED HANDLER: Stream Page (e.g., International Olympiads) ---
@@ -384,16 +409,17 @@ class StreamHandler(BasePageHandler):
                 if is_broken: logging.warning(f"     [FLAG] Broken Link: {link}")
 
                 scraped_batch.append({
-                    "base_url": url, 
-                    "course_name": name, 
-                    "cta_link": link, 
+                    "base_url": url,
+                    "course_name": name,
+                    "cta_link": link,
                     "price": card_price,
                     "pdp_price": pdp_price,
                     "cta_status": cta_status,
                     "is_broken": is_broken,
-                    "price_mismatch": mismatch
+                    "price_mismatch": mismatch,
+                    "viewport": self.viewport
                 })
-            
+
             self.db.save_batch(scraped_batch)
 
 # --- CORE ENGINE ---
@@ -433,39 +459,80 @@ class ScraperEngine:
                         logging.warning(f"URL found without category: {line}")
         return tasks
 
+    def _run_viewport(self, tasks: list, label: str, context_kwargs: dict):
+        """
+        Scrape all tasks under one browser context.
+        Designed to run in its own thread — each call creates an independent
+        sync_playwright() session so there is no cross-thread state sharing.
+        """
+        logging.info(f"[{label.upper()}] Starting scrape pass")
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(**context_kwargs)
+            page = context.new_page()
+
+            for tag, url in tasks:
+                handler_class = self.handler_map.get(tag)
+                if handler_class:
+                    logging.info(f"[{label.upper()}] {tag} -> {url}")
+                    handler = handler_class(page, self.db, viewport=label)
+                    try:
+                        handler.scrape(url)
+                    except Exception as e:
+                        logging.error(f"[{label.upper()}] Error on {url}: {e}")
+                else:
+                    logging.warning(f"No handler for tag: [{tag}]")
+
+            browser.close()
+        logging.info(f"[{label.upper()}] Scrape pass complete")
+
     def run(self):
         tasks = self.parse_urls()
         if not tasks:
             logging.warning("No scraping tasks found.")
             return
 
+        start_time = datetime.now()
+        url_list = [url for _, url in tasks]
+
+        # Resolve the iPhone XR device descriptor before entering threads
+        # (p.devices must be read inside a sync_playwright() context)
         with sync_playwright() as p:
-            # We preserve the browser/page context across tasks for efficiency
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-            page.set_viewport_size({"width": 1920, "height": 1080})
+            mobile_kwargs = dict(p.devices[MOBILE_DEVICE])
 
-            for tag, url in tasks:
-                handler_class = self.handler_map.get(tag)
-                
-                if handler_class:
-                    logging.info(f"Starting Task: {tag} -> {url}")
-                    handler = handler_class(page, self.db)
-                    try:
-                        handler.scrape(url)
-                    except Exception as e:
-                        logging.error(f"Error scraping {url} with {tag}: {e}")
-                else:
-                    logging.warning(f"No handler registered for tag: [{tag}]")
+        viewport_configs = [
+            ("desktop", {"viewport": {"width": 1920, "height": 1080}}),
+            ("mobile",  mobile_kwargs),
+        ]
 
-            browser.close()
-        
-        # Run validation using the new modular system
+        # Run desktop and mobile passes in parallel — ~2x faster
+        logging.info("Starting parallel scrape (desktop + mobile)...")
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = {
+                pool.submit(self._run_viewport, tasks, label, kwargs): label
+                for label, kwargs in viewport_configs
+            }
+            for future in as_completed(futures):
+                label = futures[future]
+                try:
+                    future.result()
+                except Exception as e:
+                    logging.error(f"[{label.upper()}] Pass failed with unhandled error: {e}")
+
+        # Validation runs after both passes are done
         logging.info("")
-        logging.info("Running validation checks...")
+        logging.info("Running validation checks across all viewports...")
         validator = ValidationService(self.db.db_name)
         validator.validate_all_courses()
         validator.log_results()
+
+        # Save human-readable report
+        ReportGenerator(
+            validation_service=validator,
+            db_name=self.db.db_name,
+            start_time=start_time,
+            urls_scraped=url_list,
+        ).save()
 
 if __name__ == "__main__":
     engine = ScraperEngine()

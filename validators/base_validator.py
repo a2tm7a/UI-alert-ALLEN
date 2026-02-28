@@ -18,6 +18,7 @@ class ValidationResult:
     field: str = None  # Which field has the issue
     expected: Any = None
     actual: Any = None
+    viewport: str = 'desktop'  # 'desktop' | 'mobile'
 
 
 class BaseValidator(ABC):
