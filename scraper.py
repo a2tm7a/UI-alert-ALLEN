@@ -5,6 +5,7 @@ import logging
 import time
 from abc import ABC, abstractmethod
 from playwright.sync_api import sync_playwright
+from validation_service import ValidationService
 
 # --- LOGGING & DATABASE SETUP ---
 logging.basicConfig(
@@ -178,7 +179,8 @@ class BasePageHandler(ABC):
                     if any(kw == text or (kw in text and len(text) < 20) for kw in cta_keywords):
                         cta_status = f"Found ({btn.inner_text().strip()})"
                         break
-                except: continue
+                except Exception:
+                    continue
             
             # Navigate back to original context
             self.page.goto(original_url, wait_until="domcontentloaded")
@@ -461,8 +463,6 @@ class ScraperEngine:
         # Run validation using the new modular system
         logging.info("")
         logging.info("Running validation checks...")
-        from validation_service import ValidationService
-        
         validator = ValidationService(self.db.db_name)
         validator.validate_all_courses()
         validator.log_results()
