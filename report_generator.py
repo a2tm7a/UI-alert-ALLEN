@@ -104,6 +104,8 @@ class ReportGenerator:
 
         d_courses, m_courses, t_courses = stat("courses")
         d_broken, m_broken, t_broken = stat("broken")
+        d_p_missing, m_p_missing, t_p_missing = stat("price_missing")
+        d_p_correct, m_p_correct, t_p_correct = stat("price_correct")
         d_mismatch, m_mismatch, t_mismatch = stat("price_mismatch")
         d_cta_found, m_cta_found, t_cta_found = stat("cta_found")
         d_cta_missing, m_cta_missing, t_cta_missing = stat("cta_missing")
@@ -115,6 +117,8 @@ class ReportGenerator:
             "|--------|--------:|-------:|------:|",
             f"| Courses scraped | {d_courses} | {m_courses} | {t_courses} |",
             f"| Broken links | {d_broken} | {m_broken} | **{t_broken}** |",
+            f"| Price missing | {d_p_missing} | {m_p_missing} | {t_p_missing} |",
+            f"| Price correct ✅ | {d_p_correct} | {m_p_correct} | {t_p_correct} |",
             f"| Price mismatches | {d_mismatch} | {m_mismatch} | **{t_mismatch}** |",
             f"| CTA found on PDP | {d_cta_found} | {m_cta_found} | {t_cta_found} |",
             f"| CTA missing on PDP | {d_cta_missing} | {m_cta_missing} | **{t_cta_missing}** |",
@@ -201,22 +205,33 @@ class ReportGenerator:
                     """
                     SELECT
                         viewport,
-                        COUNT(*)                                                  AS courses,
-                        SUM(is_broken)                                            AS broken,
-                        SUM(price_mismatch)                                       AS price_mismatch,
-                        SUM(CASE WHEN cta_status LIKE 'Found%' THEN 1 ELSE 0 END) AS cta_found,
-                        SUM(CASE WHEN cta_status = 'Not Found'  THEN 1 ELSE 0 END) AS cta_missing
+                        COUNT(*)                                                        AS courses,
+                        SUM(is_broken)                                                  AS broken,
+                        SUM(price_mismatch)                                             AS price_mismatch,
+                        -- price_missing: PDP price unavailable (scraper couldn't find it)
+                        SUM(CASE WHEN pdp_price IN ('Not Found','N/A','Error','')
+                                  OR pdp_price IS NULL                  THEN 1 ELSE 0 END) AS price_missing,
+                        -- price_correct: both prices present and matching
+                        SUM(CASE WHEN pdp_price NOT IN ('Not Found','N/A','Error','')
+                                  AND pdp_price IS NOT NULL
+                                  AND price    NOT IN ('N/A','Error','')
+                                  AND price    IS NOT NULL
+                                  AND price_mismatch = 0               THEN 1 ELSE 0 END) AS price_correct,
+                        SUM(CASE WHEN cta_status LIKE 'Found%' THEN 1 ELSE 0 END)      AS cta_found,
+                        SUM(CASE WHEN cta_status = 'Not Found' THEN 1 ELSE 0 END)      AS cta_missing
                     FROM courses
                     GROUP BY viewport
                     """
                 ):
                     viewport = row[0] or "unknown"
                     stats[viewport] = {
-                        "courses": row[1] or 0,
-                        "broken": row[2] or 0,
+                        "courses":        row[1] or 0,
+                        "broken":         row[2] or 0,
                         "price_mismatch": row[3] or 0,
-                        "cta_found": row[4] or 0,
-                        "cta_missing": row[5] or 0,
+                        "price_missing":  row[4] or 0,
+                        "price_correct":  row[5] or 0,
+                        "cta_found":      row[6] or 0,
+                        "cta_missing":    row[7] or 0,
                     }
         except Exception as e:
             logging.warning(f"Could not query DB stats for report: {e}")
