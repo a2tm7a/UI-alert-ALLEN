@@ -5,3 +5,5 @@ scraper.log
 __pycache__/
 *.pyc
 *.pyo
+# Ignore generated run reports, but keep reports/README.md and reports/.gitkeep
+reports/report_*.md
