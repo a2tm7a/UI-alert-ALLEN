@@ -5,7 +5,7 @@ Orchestrates validation rules and manages validation results.
 
 import sqlite3
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from validators import BaseValidator, ValidationResult, PurchaseCTAValidator, PriceMismatchValidator
 
 
@@ -46,10 +46,14 @@ class ValidationService:
         """
         return self.validator_chain.validate(course_data)
     
-    def validate_all_courses(self) -> List[ValidationResult]:
+    def validate_all_courses(self, run_id: Optional[int] = None) -> List[ValidationResult]:
         """
-        Validate all courses in the database.
+        Validate courses in the database.
         
+        Args:
+            run_id: If provided, only courses belonging to this specific run
+                    will be validated. If omitted, all courses are validated.
+                         
         Returns:
             List of all ValidationResult objects found
         """
@@ -58,7 +62,11 @@ class ValidationService:
         with sqlite3.connect(self.db_name) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM courses")
+            
+            if run_id is not None:
+                cursor.execute("SELECT * FROM courses WHERE run_id = ?", (run_id,))
+            else:
+                cursor.execute("SELECT * FROM courses")
 
             for row in cursor.fetchall():
                 course_data = dict(row)

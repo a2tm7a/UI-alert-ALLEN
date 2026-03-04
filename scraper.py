@@ -29,9 +29,17 @@ class DatabaseManager:
         with sqlite3.connect(self.db_name) as conn:
             # WAL mode allows concurrent reads while a write is in progress
             conn.execute("PRAGMA journal_mode=WAL")
+            # Runs table — one row per scraper invocation
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS runs (
+                    run_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+                    started_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
             conn.execute('''
                 CREATE TABLE IF NOT EXISTS courses (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id  INTEGER REFERENCES runs(run_id),
                     base_url TEXT,
                     course_name TEXT,
                     cta_link TEXT,
@@ -44,53 +52,55 @@ class DatabaseManager:
                     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
-            # Migration guard for existing DBs that pre-date this column
-            try:
-                conn.execute("ALTER TABLE courses ADD COLUMN viewport TEXT DEFAULT 'desktop'")
-            except sqlite3.OperationalError:
-                pass  # Column already exists
 
-    def save_batch(self, courses):
+    def create_run(self) -> int:
+        """Insert a new row into the runs table and return its run_id."""
+        with sqlite3.connect(self.db_name, timeout=30) as conn:
+            cursor = conn.cursor()
+            cursor.execute("INSERT INTO runs DEFAULT VALUES")
+            conn.commit()
+            run_id = cursor.lastrowid
+            logging.info(f"Run #{run_id} started.")
+            return run_id
+
+    def save_batch(self, courses, run_id: int):
+        """Persist a batch of scraped courses, tagged with the current run_id."""
         # timeout=30 ensures threads wait for the write lock instead of crashing
         with sqlite3.connect(self.db_name, timeout=30) as conn:
             cursor = conn.cursor()
             new_items = 0
             for item in courses:
                 viewport = item.get('viewport', 'desktop')
-                # Dedup is scoped per viewport — same course on desktop vs mobile = 2 rows
-                cursor.execute(
-                    'SELECT id FROM courses WHERE course_name = ? AND cta_link = ? AND viewport = ?',
-                    (item['course_name'], item['cta_link'], viewport)
-                )
-                if not cursor.fetchone():
-                    cursor.execute('''
-                        INSERT INTO courses
-                            (base_url, course_name, cta_link, price, pdp_price, cta_status, is_broken, price_mismatch, viewport)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', (
-                        item['base_url'],
-                        item['course_name'],
-                        item['cta_link'],
-                        item['price'],
-                        item.get('pdp_price', 'N/A'),
-                        item.get('cta_status', 'N/A'),
-                        item.get('is_broken', 0),
-                        item.get('price_mismatch', 0),
-                        viewport
-                    ))
-                    new_items += 1
+                cursor.execute('''
+                    INSERT INTO courses
+                        (run_id, base_url, course_name, cta_link, price, pdp_price, cta_status, is_broken, price_mismatch, viewport)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    run_id,
+                    item['base_url'],
+                    item['course_name'],
+                    item['cta_link'],
+                    item['price'],
+                    item.get('pdp_price', 'N/A'),
+                    item.get('cta_status', 'N/A'),
+                    item.get('is_broken', 0),
+                    item.get('price_mismatch', 0),
+                    viewport
+                ))
+                new_items += 1
             conn.commit()
             if new_items > 0:
-                logging.info(f"[{viewport}] Successfully saved {new_items} new courses.")
+                logging.info(f"[{viewport}] Successfully saved {new_items} new courses (run #{run_id}).")
 
 # --- BASE HANDLER STRATEGY ---
 class BasePageHandler(ABC):
     """Abstract base class for all page-specific scraping logic."""
 
-    def __init__(self, page, db_manager, viewport: str = 'desktop'):
+    def __init__(self, page, db_manager, viewport: str = 'desktop', run_id: int = None):
         self.page = page
         self.db = db_manager
         self.viewport = viewport  # 'desktop' | 'mobile'
+        self.run_id = run_id
         self.processed_keys = set()
 
     def clean_price(self, price_str):
@@ -290,7 +300,7 @@ class HomepageHandler(BasePageHandler):
                     "viewport": self.viewport
                 })
 
-            self.db.save_batch(scraped_batch)
+            self.db.save_batch(scraped_batch, self.run_id)
 
 # --- SPECIALIZED HANDLER: PLP Page (Product Listing Page) ---
 class PLPHandler(BasePageHandler):
@@ -361,7 +371,7 @@ class PLPHandler(BasePageHandler):
                     "viewport": self.viewport
                 })
 
-            self.db.save_batch(scraped_batch)
+            self.db.save_batch(scraped_batch, self.run_id)
 
 # --- SPECIALIZED HANDLER: Stream Page (e.g., International Olympiads) ---
 class StreamHandler(BasePageHandler):
@@ -432,7 +442,7 @@ class StreamHandler(BasePageHandler):
                     "viewport": self.viewport
                 })
 
-            self.db.save_batch(scraped_batch)
+            self.db.save_batch(scraped_batch, self.run_id)
 
 # --- CORE ENGINE ---
 class ScraperEngine:
@@ -459,7 +469,7 @@ class ScraperEngine:
         with open(self.urls_file, "r") as f:
             for line in f:
                 line = line.strip()
-                if not line: continue
+                if not line or line.startswith('#'): continue
                 
                 # Check for section header [TYPE]
                 header_match = re.match(r'^\[(.*?)\]$', line)
@@ -472,7 +482,7 @@ class ScraperEngine:
                         logging.warning(f"URL found without category: {line}")
         return tasks
 
-    def _run_viewport(self, tasks: list, label: str, context_kwargs: dict):
+    def _run_viewport(self, tasks: list, label: str, context_kwargs: dict, run_id: int):
         """
         Scrape all tasks under one browser context.
         Designed to run in its own thread — each call creates an independent
@@ -488,7 +498,7 @@ class ScraperEngine:
                 handler_class = self.handler_map.get(tag)
                 if handler_class:
                     logging.info(f"[{label.upper()}] {tag} -> {url}")
-                    handler = handler_class(page, self.db, viewport=label)
+                    handler = handler_class(page, self.db, viewport=label, run_id=run_id)
                     try:
                         handler.scrape(url)
                     except Exception as e:
@@ -505,6 +515,8 @@ class ScraperEngine:
             logging.warning("No scraping tasks found.")
             return
 
+        # Create a new run record before anything else
+        run_id = self.db.create_run()
         start_time = datetime.now()
         url_list = [url for _, url in tasks]
 
@@ -522,7 +534,7 @@ class ScraperEngine:
         logging.info("Starting parallel scrape (desktop + mobile)...")
         with ThreadPoolExecutor(max_workers=2) as pool:
             futures = {
-                pool.submit(self._run_viewport, tasks, label, kwargs): label
+                pool.submit(self._run_viewport, tasks, label, kwargs, run_id): label
                 for label, kwargs in viewport_configs
             }
             for future in as_completed(futures):
@@ -536,7 +548,7 @@ class ScraperEngine:
         logging.info("")
         logging.info("Running validation checks across all viewports...")
         validator = ValidationService(self.db.db_name)
-        validator.validate_all_courses()
+        validator.validate_all_courses(run_id=run_id)
         validator.log_results()
 
         # Save human-readable report
