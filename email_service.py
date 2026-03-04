@@ -84,15 +84,60 @@ class EmailService:
     # ------------------------------------------------------------------
 
     def _load_config(self, path: str) -> dict:
-        if not os.path.exists(path):
-            logging.debug(f"Email config not found at {path} — email notifications disabled.")
-            return {}
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception as e:
-            logging.warning(f"Could not load email config: {e}")
-            return {}
+        # 1. Try JSON file first
+        cfg: dict = {}
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    cfg = json.load(f)
+            except Exception as e:
+                logging.warning(f"Could not load email config: {e}")
+
+        # 2. Override / supplement with environment variables.
+        #    This is the primary mechanism for CI (GitHub Actions Secrets).
+        #    Any env var present takes precedence over the JSON value.
+        #
+        #    Required env vars:
+        #      EMAIL_USERNAME   — SMTP login (e.g. you@gmail.com)
+        #      EMAIL_PASSWORD   — SMTP App Password
+        #      EMAIL_TO         — comma-separated recipient list
+        #    Optional:
+        #      EMAIL_ENABLED    — "true" / "false"  (default: true if creds present)
+        #      EMAIL_SEND_ON    — "always" / "errors" / "never"  (default: errors)
+        #      EMAIL_FROM       — display name + address
+        #      EMAIL_HOST       — SMTP host  (default: smtp.gmail.com)
+        #      EMAIL_PORT       — SMTP port  (default: 587)
+
+        env_username = os.environ.get("EMAIL_USERNAME", "")
+        env_password = os.environ.get("EMAIL_PASSWORD", "")
+        env_to       = os.environ.get("EMAIL_TO", "")
+
+        if env_username or env_password or env_to:
+            # Merge env vars on top of whatever the JSON said
+            smtp = cfg.setdefault("smtp", {})
+            if env_username:
+                smtp["username"] = env_username
+            if env_password:
+                smtp["password"] = env_password
+            smtp.setdefault("host", os.environ.get("EMAIL_HOST", "smtp.gmail.com"))
+            smtp.setdefault("port", int(os.environ.get("EMAIL_PORT", "587")))
+            smtp.setdefault("use_tls", True)
+
+            if env_to:
+                cfg["to"] = [a.strip() for a in env_to.split(",") if a.strip()]
+            cfg.setdefault("from", os.environ.get(
+                "EMAIL_FROM",
+                f"ALLEN Verifier <{env_username}>" if env_username else "ALLEN Verifier"
+            ))
+            cfg.setdefault("send_on", os.environ.get("EMAIL_SEND_ON", "errors"))
+
+            # Auto-enable if creds are supplied via env
+            enabled_env = os.environ.get("EMAIL_ENABLED", "").lower()
+            cfg["enabled"] = (enabled_env != "false")
+
+        if not cfg:
+            logging.debug("No email config found — email notifications disabled.")
+        return cfg
 
     def _should_send(self, summary: dict) -> bool:
         if not self.config:

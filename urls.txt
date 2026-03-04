@@ -24,6 +24,11 @@ https://allen.in/jee-main/online-test-series
 https://allen.in/class-6-10/pncf-supplemental-courses
 https://allen.in/aiot-register
 https://allen.in/international-olympiads
+https://allen.in/international-olympiads/class-8
+https://allen.in/international-olympiads/class-9
+https://allen.in/international-olympiads/class-10
+https://allen.in/international-olympiads/class-11
+https://allen.in/international-olympiads/class-12
 
 [RESULTS_PAGES]
 https://allen.in/neet/result-2025

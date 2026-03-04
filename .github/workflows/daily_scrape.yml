@@ -1,0 +1,53 @@
+name: Daily Scraper & Verification
+
+on:
+  schedule:
+    # Runs at 02:30 UTC = 08:00 IST every day
+    - cron: '30 2 * * *'
+  workflow_dispatch:     # also allows manual trigger from the GitHub UI
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120   # scraper ~30-40 min locally; 2h is a safe ceiling
+
+    steps:
+      # ── 1. Checkout ────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Python ──────────────────────────────────────────────────
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      # ── 3. Python deps ─────────────────────────────────────────────
+      - name: Install Python dependencies
+        run: pip install playwright
+
+      # ── 4. Chromium + OS libs ──────────────────────────────────────
+      # --with-deps installs the system libraries Chromium needs on Ubuntu
+      - name: Install Playwright Chromium
+        run: playwright install chromium --with-deps
+
+      # ── 5. Scrape ──────────────────────────────────────────────────
+      - name: Run scraper
+        env:
+          EMAIL_USERNAME: ${{ secrets.EMAIL_USERNAME }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          EMAIL_TO:       ${{ secrets.EMAIL_TO }}
+          # Optional overrides (add as Secrets if you need them):
+          # EMAIL_FROM:    ${{ secrets.EMAIL_FROM }}
+          # EMAIL_SEND_ON: errors          # always | errors | never
+        run: python3 scraper.py
+
+      # ── 6. Upload report as Actions artifact (30-day retention) ───
+      - name: Upload report
+        if: always()    # upload even if scraper exits with errors
+        uses: actions/upload-artifact@v4
+        with:
+          name: report-${{ github.run_number }}
+          path: reports/
+          retention-days: 30
