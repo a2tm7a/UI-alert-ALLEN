@@ -534,60 +534,59 @@ class ScraperEngine:
         """
         Scrape all tasks under one browser context.
 
-        Each call creates an independent sync_playwright() session (no cross-thread state).
-        Within the session, individual URLs are scraped in parallel: each URL worker opens
-        its own page so I/O-bound navigations do not block each other.
+        IMPORTANT — Playwright sync_api is NOT thread-safe.
+        A single browser/context cannot be shared across threads; doing so corrupts
+        the internal asyncio event loop and causes 'Connection closed' crashes.
 
-        The shared PdpCache is passed into every handler so that PDPs already verified by
-        one URL worker are not re-visited by another.
+        Fix: each URL worker creates its own independent sync_playwright() session
+        (separate browser process).  Workers are I/O-bound so the overhead of
+        launching extra browser instances is small compared to page load times.
+
+        The shared PdpCache is still passed into every handler (it is thread-safe
+        via its own Lock), so duplicate PDP navigations are still avoided.
         """
         logging.info(f"[{label.upper()}] Starting scrape pass ({len(tasks)} URLs, parallel)")
 
         # Number of concurrent URL workers per viewport.
-        # 4 is a good balance: enough concurrency without overloading the headless browser.
+        # Each spawns its own headless Chrome; 4 is a safe default.
         MAX_URL_WORKERS = 4
 
-        def _scrape_one_url(tag: str, url: str, context):
-            """Worker: open a dedicated page, run the handler, close the page."""
+        def _scrape_one_url(tag: str, url: str):
+            """Worker: own playwright session → own browser → own page."""
             handler_class = self.handler_map.get(tag)
             if not handler_class:
                 logging.warning(f"No handler for tag: [{tag}]")
                 return
-            page = context.new_page()
-            try:
-                logging.info(f"[{label.upper()}] {tag} -> {url}")
-                handler = handler_class(
-                    page, self.db,
-                    viewport=label,
-                    run_id=run_id,
-                    pdp_cache=pdp_cache,
-                )
-                handler.scrape(url)
-            except Exception as e:
-                logging.error(f"[{label.upper()}] Error on {url}: {e}")
-            finally:
+            with sync_playwright() as pw:
+                browser = pw.chromium.launch(headless=True)
                 try:
-                    page.close()
-                except Exception:
-                    pass
+                    context = browser.new_context(**context_kwargs)
+                    page = context.new_page()
+                    logging.info(f"[{label.upper()}] {tag} -> {url}")
+                    handler = handler_class(
+                        page, self.db,
+                        viewport=label,
+                        run_id=run_id,
+                        pdp_cache=pdp_cache,
+                    )
+                    handler.scrape(url)
+                except Exception as e:
+                    logging.error(f"[{label.upper()}] Error on {url}: {e}")
+                finally:
+                    browser.close()
 
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            context = browser.new_context(**context_kwargs)
+        with ThreadPoolExecutor(max_workers=MAX_URL_WORKERS) as url_pool:
+            futures = {
+                url_pool.submit(_scrape_one_url, tag, url): (tag, url)
+                for tag, url in tasks
+            }
+            for future in as_completed(futures):
+                tag, url = futures[future]
+                try:
+                    future.result()
+                except Exception as e:
+                    logging.error(f"[{label.upper()}] Unhandled error for {url}: {e}")
 
-            with ThreadPoolExecutor(max_workers=MAX_URL_WORKERS) as url_pool:
-                futures = {
-                    url_pool.submit(_scrape_one_url, tag, url, context): (tag, url)
-                    for tag, url in tasks
-                }
-                for future in as_completed(futures):
-                    tag, url = futures[future]
-                    try:
-                        future.result()
-                    except Exception as e:
-                        logging.error(f"[{label.upper()}] Unhandled error for {url}: {e}")
-
-            browser.close()
         logging.info(f"[{label.upper()}] Scrape pass complete")
 
     def run(self):
