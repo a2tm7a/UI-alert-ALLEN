@@ -702,6 +702,7 @@ class ScraperEngine:
             db_name=self.db.db_name,
             start_time=start_time,
             urls_scraped=url_list,
+            run_id=run_id,
         ).save()
 
 if __name__ == "__main__":

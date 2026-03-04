@@ -32,12 +32,14 @@ class ReportGenerator:
         db_name: str,
         start_time: datetime,
         urls_scraped: List[str],
+        run_id: Optional[int] = None,
     ):
         self.vs = validation_service
         self.db_name = db_name
         self.start_time = start_time
         self.end_time = datetime.now()
         self.urls_scraped = urls_scraped
+        self.run_id = run_id
 
     # ------------------------------------------------------------------
     # Public API
@@ -222,29 +224,34 @@ class ReportGenerator:
     # ------------------------------------------------------------------
 
     def _query_db_stats(self) -> dict:
-        """Return per-viewport counts from the DB."""
+        """Return per-viewport counts from the DB, scoped to the current run_id."""
         stats: dict = {}
         try:
+            # Only count rows from this specific run so the summary never
+            # accumulates across previous runs.
+            where = "WHERE run_id = ?" if self.run_id is not None else ""
+            params = (self.run_id,) if self.run_id is not None else ()
+
             with sqlite3.connect(self.db_name, timeout=10) as conn:
                 for row in conn.execute(
-                    """
+                    f"""
                     SELECT
                         viewport,
                         COUNT(*)                                                        AS courses,
                         SUM(is_broken)                                                  AS broken,
                         SUM(price_mismatch)                                             AS price_mismatch,
-                        -- price_missing: PDP price unavailable
                         SUM(CASE WHEN pdp_price IN ('Not Found','N/A','Error','')
                                   OR pdp_price IS NULL                  THEN 1 ELSE 0 END) AS price_missing,
-                        -- price_correct: PDP price found and no mismatch (card may or may not show price)
                         SUM(CASE WHEN (pdp_price NOT IN ('Not Found','N/A','Error','')
                                   AND pdp_price IS NOT NULL)
                                   AND price_mismatch = 0               THEN 1 ELSE 0 END) AS price_correct,
                         SUM(CASE WHEN cta_status LIKE 'Found%' THEN 1 ELSE 0 END)      AS cta_found,
                         SUM(CASE WHEN cta_status = 'Not Found' THEN 1 ELSE 0 END)      AS cta_missing
                     FROM courses
+                    {where}
                     GROUP BY viewport
-                    """
+                    """,
+                    params,
                 ):
                     viewport = row[0] or "unknown"
                     stats[viewport] = {
