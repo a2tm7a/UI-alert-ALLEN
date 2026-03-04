@@ -446,7 +446,18 @@ class PLPHandler(BasePageHandler):
     def scrape(self, url):
         logging.debug(f"PLPHandler: {url}")
         self.page.goto(url, wait_until="domcontentloaded")
-        time.sleep(3)
+
+        try:
+            # Wait up to 15s for the first course card to render from the API.
+            # A bare time.sleep(3) is unreliable on CI (slow network + headless).
+            self.page.wait_for_selector('li[data-testid^="card-"]', timeout=15000)
+        except Exception:
+            logging.warning(
+                f"PLPHandler: No cards found after 15s on {url}. "
+                "Page may not have rendered fully (possible bot-detection or empty page)."
+            )
+
+        time.sleep(1)  # short buffer for SPA to settle after cards appear
 
         # Filters/Pills (Live, Recorded)
         pills_loc = self.page.locator('button').filter(
@@ -518,7 +529,19 @@ class StreamHandler(BasePageHandler):
     def scrape(self, url):
         logging.debug(f"StreamHandler: {url}")
         self.page.goto(url, wait_until="domcontentloaded")
-        time.sleep(3)
+
+        try:
+            # Wait up to 15s for at least one course card li to appear.
+            # Stream pages load cards via a client-side fetch; without this wait
+            # the handler would scan an empty DOM on slow CI networks.
+            self.page.wait_for_selector('li[data-testid^="card-"]', timeout=15000)
+        except Exception:
+            logging.warning(
+                f"StreamHandler: No cards found after 15s on {url}. "
+                "Page may be empty, blocked, or not yet rendered."
+            )
+
+        time.sleep(1)  # short buffer for SPA animations to settle
 
         # Identify Class Tabs (Class 8, Class 9, Class 12+, etc.)
         # Important: restrict to <button> only — bare <div> matches decorative class-grid
@@ -663,6 +686,12 @@ class ScraperEngine:
                 try:
                     context = browser.new_context(**context_kwargs)
                     page = context.new_page()
+                    # Override the most-checked bot signal: navigator.webdriver.
+                    # Playwright sets this to true by default; injecting before
+                    # any page script runs means sites never see the sentinel value.
+                    page.add_init_script(
+                        "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+                    )
                     handler = handler_class(
                         page, self.db,
                         viewport=label,
@@ -726,8 +755,21 @@ class ScraperEngine:
         with sync_playwright() as p:
             mobile_kwargs = dict(p.devices[MOBILE_DEVICE])
 
+        # Desktop context: use a realistic Windows Chrome UA so the scraper
+        # doesn't present itself as Linux/headless on GitHub Actions (data-centre
+        # IPs + the default Playwright UA are a near-certain bot signal).
+        DESKTOP_UA = (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/122.0.0.0 Safari/537.36"
+        )
         viewport_configs = [
-            ("desktop", {"viewport": {"width": 1920, "height": 1080}}),
+            ("desktop", {
+                "viewport": {"width": 1920, "height": 1080},
+                "user_agent": DESKTOP_UA,
+                "locale": "en-IN",
+                "extra_http_headers": {"Accept-Language": "en-IN,en-US;q=0.9,en;q=0.8"},
+            }),
             ("mobile",  mobile_kwargs),
         ]
 
