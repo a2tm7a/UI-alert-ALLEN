@@ -616,7 +616,18 @@ class ScraperEngine:
             success = True
 
             with sync_playwright() as pw:
-                browser = pw.chromium.launch(headless=True)
+                # --no-sandbox is required on Linux (GitHub Actions / Docker).
+                # --disable-dev-shm-usage prevents crashes from /dev/shm being too small.
+                # --disable-blink-features=AutomationControlled reduces bot fingerprint.
+                # These flags are harmless on macOS.
+                browser = pw.chromium.launch(
+                    headless=True,
+                    args=[
+                        "--no-sandbox",
+                        "--disable-dev-shm-usage",
+                        "--disable-blink-features=AutomationControlled",
+                    ],
+                )
                 try:
                     context = browser.new_context(**context_kwargs)
                     page = context.new_page()
