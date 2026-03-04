@@ -372,6 +372,9 @@ class HomepageHandler(BasePageHandler):
                 if name == "N/A" or f"{tab_name}_{name}" in self.processed_keys: continue
                 self.processed_keys.add(f"{tab_name}_{name}")
 
+                # TODO(hack): skip DLP courses until they are fixed upstream
+                if "DLP" in name: logging.debug(f"  [SKIP-DLP] {name}"); continue
+
                 logging.debug(f"    Card: {name}")
                 card_price = self.safe_get_text(card, ['[class*="price"]', '[class*="fee"]', 'h3'])
                 link = self.extract_cta_link(card, tab_el, tab_name)
@@ -440,6 +443,9 @@ class PLPHandler(BasePageHandler):
                 
                 if name == "N/A" or f"{pill_name}_{name}" in self.processed_keys: continue
                 self.processed_keys.add(f"{pill_name}_{name}")
+
+                # TODO(hack): skip DLP courses until they are fixed upstream
+                if "DLP" in name: logging.debug(f"  [SKIP-DLP] {name}"); continue
 
                 logging.debug(f"    Card: {name}")
                 card_price = self.safe_get_text(card, ['[class*="price"]', '[class*="fee"]', 'h3'])
@@ -513,6 +519,9 @@ class StreamHandler(BasePageHandler):
                 
                 if name == "N/A" or f"{tab_name}_{name}" in self.processed_keys: continue
                 self.processed_keys.add(f"{tab_name}_{name}")
+
+                # TODO(hack): skip DLP courses until they are fixed upstream
+                if "DLP" in name: logging.debug(f"  [SKIP-DLP] {name}"); continue
 
                 logging.debug(f"    Card: {name}")
                 card_price = self.safe_get_text(card, ['h3', '[class*="price"]'])
