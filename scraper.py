@@ -769,6 +769,7 @@ class ScraperEngine:
         logging.info(f"[{label.upper()}] ▶  Starting — {len(tasks)} URLs")
 
         MAX_URL_WORKERS = max(1, WATCHDOG_MAX_WORKERS)
+        logging.info(f"[{label.upper()}] Using MAX_WORKERS={MAX_URL_WORKERS}")
         task_chunks = [tasks[i::MAX_URL_WORKERS] for i in range(MAX_URL_WORKERS)]
         task_chunks = [chunk for chunk in task_chunks if chunk]
         if not task_chunks:
@@ -881,6 +882,17 @@ class ScraperEngine:
         if not tasks:
             logging.warning("No scraping tasks found.")
             return
+
+        logging.info(
+            "Config: WAIT_MS=%s RETRIES=%s BACKOFF_MS=%s MAX_WORKERS=%s SERIAL_VIEWPORTS=%s FAIL_ON_EMPTY=%s ARTIFACT_DIR=%s",
+            WATCHDOG_WAIT_MS,
+            WATCHDOG_RETRIES,
+            WATCHDOG_RETRY_BACKOFF_MS,
+            WATCHDOG_MAX_WORKERS,
+            WATCHDOG_CI_SERIAL_VIEWPORTS,
+            WATCHDOG_FAIL_ON_EMPTY,
+            WATCHDOG_ARTIFACT_DIR,
+        )
 
         # Create a new run record before anything else
         run_id = self.db.create_run()
