@@ -26,11 +26,12 @@ import re
 import logging
 import threading
 import time
+import sys
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from playwright.sync_api import sync_playwright
-from playwright_stealth import stealth
+from playwright_stealth import Stealth
 from validation_service import ValidationService
 from report_generator import ReportGenerator
 from email_service import EmailService
@@ -44,6 +45,8 @@ logging.basicConfig(
     format='%(asctime)s - [%(levelname)s] - %(message)s',
     handlers=[logging.FileHandler("scraper.log"), logging.StreamHandler()]
 )
+
+STEALTH = Stealth()
 
 class DatabaseManager:
     def __init__(self, db_name="scraped_data.db"):
@@ -646,94 +649,115 @@ class ScraperEngine:
         return tasks
 
     def _run_viewport(self, tasks: list, label: str, context_kwargs: dict, run_id: int, pdp_cache: PdpCache = None):
-        """
-        Scrape all tasks under one browser context.
-
-        IMPORTANT — Playwright sync_api is NOT thread-safe.
-        Each URL worker creates its own independent sync_playwright() session.
-        The shared PdpCache is thread-safe via its own Lock.
-        """
+        """Scrape all tasks under one browser context."""
         progress = ProgressTracker(len(tasks), label)
         logging.info(f"[{label.upper()}] ▶  Starting — {len(tasks)} URLs")
 
-        # Number of concurrent URL workers per viewport.
-        # Kept at 2 (not 4) to avoid triggering burst-based bot detection:
-        # 4 workers × 2 viewports = 8 simultaneous Playwright sessions all
-        # hitting the same site within milliseconds — a strong bot signal on
-        # peak-traffic hours when WAF rules are most aggressive.
         MAX_URL_WORKERS = 2
+        task_chunks = [tasks[i::MAX_URL_WORKERS] for i in range(MAX_URL_WORKERS)]
+        task_chunks = [chunk for chunk in task_chunks if chunk]
+        if not task_chunks:
+            logging.info(f"[{label.upper()}] ✔  No URLs to process")
+            return
 
-        def _scrape_one_url(tag: str, url: str):
-            """Worker: own playwright session → own browser → own page."""
-            prefix = progress.advance()
-            handler_class = self.handler_map.get(tag)
-            if not handler_class:
-                logging.warning(f"{prefix} ⚠️  No handler for tag [{tag}] — skipping {url}")
-                return
-
-            logging.info(f"{prefix} 🔄 {url}")
-            t0 = time.time()
-            success = True
-
+        def _scrape_worker(worker_tasks: list):
             with sync_playwright() as pw:
-                # --no-sandbox is required on Linux (GitHub Actions / Docker).
-                # --disable-dev-shm-usage prevents crashes from /dev/shm being too small.
-                # --disable-blink-features=AutomationControlled reduces bot fingerprint.
-                # These flags are harmless on macOS.
-                browser = pw.chromium.launch(
-                    headless=True,
-                    args=[
-                        "--no-sandbox",
-                        "--disable-dev-shm-usage",
-                        "--disable-blink-features=AutomationControlled",
-                    ],
-                )
-                try:
-                    context = browser.new_context(**context_kwargs)
-                    page = context.new_page()
+                launch_args = [
+                    "--disable-dev-shm-usage",
+                    "--disable-blink-features=AutomationControlled",
+                ]
+                if sys.platform.startswith("linux"):
+                    launch_args.insert(0, "--no-sandbox")
 
-                    # Apply comprehensive anti-bot stealth measures (WebGL, 
-                    # navigator.webdriver, vendor, hairline, etc.)
-                    stealth(page) if "stealth_sync" in globals() else stealth(page)
+                def _run_with_browser(browser_type):
+                    try:
+                        browser = browser_type.launch(
+                            headless=True,
+                            args=launch_args,
+                        )
+                    except Exception as exc:
+                        logging.warning(
+                            f"[{label.upper()}] Unable to launch {browser_type.name}: {exc}"
+                        )
+                        return False
 
-                    handler = handler_class(
-                        page, self.db,
-                        viewport=label,
-                        run_id=run_id,
-                        pdp_cache=pdp_cache,
-                    )
-                    handler.scrape(url)
-                except Exception as e:
-                    success = False
-                    logging.error(f"{prefix} 💥 Error scraping {url}: {e}")
-                finally:
-                    browser.close()
+                    fatal_error = False
+                    try:
+                        logging.info(
+                            f"[{label.upper()}] Using {browser_type.name} for {len(worker_tasks)} URLs"
+                        )
+                        for tag, url in worker_tasks:
+                            prefix = progress.advance()
+                            handler_class = self.handler_map.get(tag)
+                            if not handler_class:
+                                logging.warning(
+                                    f"{prefix} ⚠️  No handler for tag [{tag}] — skipping {url}"
+                                )
+                                continue
 
-            elapsed = time.time() - t0
-            if success:
-                stats = self.db.get_url_stats(url, run_id, label)
-                if stats["issues"] == 0:
-                    logging.info(
-                        f"{prefix} ✅ {url}  "
-                        f"({stats['cards']} cards, all OK, {elapsed:.0f}s)"
-                    )
+                            logging.info(f"{prefix} 🔄 {url}")
+                            t0 = time.time()
+                            success = True
+                            context = None
+
+                            try:
+                                context = browser.new_context(**context_kwargs)
+                                STEALTH.apply_stealth_sync(context)
+                                page = context.new_page()
+
+                                handler = handler_class(
+                                    page, self.db,
+                                    viewport=label,
+                                    run_id=run_id,
+                                    pdp_cache=pdp_cache,
+                                )
+                                handler.scrape(url)
+                            except Exception as e:
+                                err_msg = str(e)
+                                if "Target page, context or browser has been closed" in err_msg:
+                                    fatal_error = True
+                                    logging.warning(
+                                        f"[{label.upper()}] {browser_type.name} crashed while scraping {url}: {err_msg}"
+                                    )
+                                    break
+                                success = False
+                                logging.error(f"{prefix} 💥 Error scraping {url}: {e}")
+                            finally:
+                                if context:
+                                    context.close()
+
+                            elapsed = time.time() - t0
+                            if success:
+                                stats = self.db.get_url_stats(url, run_id, label)
+                                if stats["issues"] == 0:
+                                    logging.info(
+                                        f"{prefix} ✅ {url}  "
+                                        f"({stats['cards']} cards, all OK, {elapsed:.0f}s)"
+                                    )
+                                else:
+                                    logging.info(
+                                        f"{prefix} ❌ {url}  "
+                                        f"({stats['cards']} cards, {stats['issues']} issue(s), {elapsed:.0f}s)"
+                                    )
+                        return not fatal_error
+                    finally:
+                        browser.close()
+
+                for browser_type in (pw.chromium, pw.webkit):
+                    if _run_with_browser(browser_type):
+                        break
                 else:
-                    logging.info(
-                        f"{prefix} ❌ {url}  "
-                        f"({stats['cards']} cards, {stats['issues']} issue(s), {elapsed:.0f}s)"
+                    logging.error(
+                        f"[{label.upper()}] All supported browsers failed to run for this worker."
                     )
 
-        with ThreadPoolExecutor(max_workers=MAX_URL_WORKERS) as url_pool:
-            futures = {
-                url_pool.submit(_scrape_one_url, tag, url): (tag, url)
-                for tag, url in tasks
-            }
+        with ThreadPoolExecutor(max_workers=len(task_chunks)) as url_pool:
+            futures = [url_pool.submit(_scrape_worker, chunk) for chunk in task_chunks]
             for future in as_completed(futures):
-                tag, url = futures[future]
                 try:
                     future.result()
                 except Exception as e:
-                    logging.error(f"[{label.upper()}] Unhandled error for {url}: {e}")
+                    logging.error(f"[{label.upper()}] Unhandled worker error: {e}")
 
         logging.info(f"[{label.upper()}] ✔  All {len(tasks)} URLs done")
 
