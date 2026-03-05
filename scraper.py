@@ -30,7 +30,7 @@ from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from playwright.sync_api import sync_playwright
-from stealth import stealth_sync
+from playwright_stealth import stealth_sync
 from validation_service import ValidationService
 from report_generator import ReportGenerator
 from email_service import EmailService
