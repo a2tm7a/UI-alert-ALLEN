@@ -395,8 +395,14 @@ class HomepageHandler(BasePageHandler):
                 time.sleep(2)
 
             cards = self.page.locator("div.rounded-normal.flex.flex-col")
-            if cards.count() == 0 and WATCHDOG_FAIL_ON_EMPTY:
-                raise RuntimeError(f"HomepageHandler: No cards found on {url}")
+            if cards.count() == 0:
+                logging.warning(
+                    f"HomepageHandler: Zero cards on tab '{tab_name}' at {url}"
+                )
+                self._capture_artifacts("HomepageHandler", url, f"empty_cards_{tab_name}")
+                if WATCHDOG_FAIL_ON_EMPTY:
+                    raise RuntimeError(f"HomepageHandler: No cards found on {url}")
+                continue
             scraped_batch = []
 
             for i in range(cards.count()):
@@ -478,8 +484,14 @@ class PLPHandler(BasePageHandler):
                 time.sleep(2)
 
             cards = self.page.locator('li[data-testid^="card-"]')
-            if cards.count() == 0 and WATCHDOG_FAIL_ON_EMPTY:
-                raise RuntimeError(f"PLPHandler: No cards found on {url}")
+            if cards.count() == 0:
+                logging.warning(
+                    f"PLPHandler: Zero cards on pill '{pill_name}' at {url}"
+                )
+                self._capture_artifacts("PLPHandler", url, f"empty_cards_{pill_name}")
+                if WATCHDOG_FAIL_ON_EMPTY:
+                    raise RuntimeError(f"PLPHandler: No cards found on {url}")
+                continue
             scraped_batch = []
 
             for i in range(cards.count()):
@@ -568,8 +580,14 @@ class StreamHandler(BasePageHandler):
                 .filter(has=self.page.locator("p"))
                 .filter(has=self.page.locator("h3"))
             )
-            if cards.count() == 0 and WATCHDOG_FAIL_ON_EMPTY:
-                raise RuntimeError(f"StreamHandler: No cards found on {url}")
+            if cards.count() == 0:
+                logging.warning(
+                    f"StreamHandler: Zero cards on tab '{tab_name}' at {url}"
+                )
+                self._capture_artifacts("StreamHandler", url, f"empty_cards_{tab_name}")
+                if WATCHDOG_FAIL_ON_EMPTY:
+                    raise RuntimeError(f"StreamHandler: No cards found on {url}")
+                continue
             scraped_batch = []
 
             for i in range(cards.count()):

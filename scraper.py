@@ -158,6 +158,7 @@ class ScraperEngine:
                             t0 = time.time()
                             success = True
                             context = None
+                            handler = None
 
                             try:
                                 context = browser.new_context(**context_kwargs)
@@ -182,6 +183,10 @@ class ScraperEngine:
                                     break
                                 success = False
                                 logging.error(f"{prefix} 💥 Error scraping {url}: {e}")
+                                if handler is not None:
+                                    handler._capture_artifacts(
+                                        handler_class.__name__, url, "exception"
+                                    )
                             finally:
                                 if context:
                                     context.close()
