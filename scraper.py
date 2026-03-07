@@ -57,7 +57,9 @@ logging.basicConfig(
 )
 
 MOBILE_DEVICE = "iPhone XR"  # logical resolution 390x844, touch, mobile Safari UA
-STEALTH = Stealth()
+STEALTH = Stealth(
+    navigator_languages_override=("en-IN", "en-US", "en"),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -139,11 +141,19 @@ class ScraperEngine:
                         return False
 
                     fatal_error = False
+                    context = None
                     try:
                         logging.info(
                             f"[{label.upper()}] Using {browser_type.name} "
                             f"for {len(worker_tasks)} URLs"
                         )
+                        # Share one browser context (and page) across all URLs
+                        # in this worker so cookies persist between navigations,
+                        # making the traffic pattern more human-like.
+                        context = browser.new_context(**context_kwargs)
+                        STEALTH.apply_stealth_sync(context)
+                        page = context.new_page()
+
                         for tag, url in worker_tasks:
                             prefix = progress.advance()
                             handler_class = self.handler_map.get(tag)
@@ -157,13 +167,9 @@ class ScraperEngine:
                             logging.info(f"{prefix} 🔄 {url}")
                             t0 = time.time()
                             success = True
-                            context = None
                             handler = None
 
                             try:
-                                context = browser.new_context(**context_kwargs)
-                                STEALTH.apply_stealth_sync(context)
-                                page = context.new_page()
                                 handler = handler_class(
                                     page,
                                     self.db,
@@ -171,6 +177,7 @@ class ScraperEngine:
                                     run_id=run_id,
                                     pdp_cache=pdp_cache,
                                 )
+                                handler._console_logs = []
                                 handler.scrape(url)
                             except Exception as e:
                                 err_msg = str(e)
@@ -187,9 +194,6 @@ class ScraperEngine:
                                     handler._capture_artifacts(
                                         handler_class.__name__, url, "exception"
                                     )
-                            finally:
-                                if context:
-                                    context.close()
 
                             elapsed = time.time() - t0
                             if success:
@@ -207,6 +211,8 @@ class ScraperEngine:
                                     )
                         return not fatal_error
                     finally:
+                        if context:
+                            context.close()
                         browser.close()
 
                 for browser_type in (pw.chromium, pw.webkit):
@@ -257,14 +263,19 @@ class ScraperEngine:
         DESKTOP_UA = (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/131.0.0.0 Safari/537.36"
+            "Chrome/134.0.0.0 Safari/537.36"
         )
         viewport_configs = [
             ("desktop", {
                 "viewport": {"width": 1920, "height": 1080},
                 "user_agent": DESKTOP_UA,
                 "locale": "en-IN",
-                "extra_http_headers": {"Accept-Language": "en-IN,en-US;q=0.9,en;q=0.8"},
+                "extra_http_headers": {
+                    "Accept-Language": "en-IN,en-US;q=0.9,en;q=0.8",
+                    "sec-ch-ua": '"Chromium";v="134", "Not:A-Brand";v="24", "Google Chrome";v="134"',
+                    "sec-ch-ua-mobile": "?0",
+                    "sec-ch-ua-platform": '"Windows"',
+                },
             }),
             ("mobile", mobile_kwargs),
         ]
