@@ -18,33 +18,44 @@ The heavy lifting lives in the focused sub-modules:
 """
 
 import logging
+import os
+import re
+import sqlite3
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from typing import Dict, List, Optional, Set, Tuple
 
-from playwright.sync_api import sync_playwright
-from playwright_stealth import Stealth
+# pyre-ignore-all-errors[21]  -- local script modules are not installed packages;
+#                                Pyre2 cannot resolve them without explicit source roots.
+from playwright.sync_api import sync_playwright  # pyre-fixme[21]
+from playwright_stealth import Stealth           # pyre-fixme[21]
 
-from database import DatabaseManager
-from cache import PdpCache, ProgressTracker
-from handlers import (
+from database import DatabaseManager            # pyre-fixme[21]
+from cache import PdpCache, ProgressTracker     # pyre-fixme[21]
+from handlers import (  # type: ignore[import]
     HomepageHandler,
     PLPHandler,
     StreamHandler,
     WATCHDOG_MAX_WORKERS,
+    WATCHDOG_WAIT_MS,
+    WATCHDOG_RETRIES,
+    WATCHDOG_RETRY_BACKOFF_MS,
+    WATCHDOG_FAIL_ON_EMPTY,
+    WATCHDOG_ARTIFACT_DIR,
 )
-from validation_service import ValidationService
-from report_generator import ReportGenerator
-from email_service import EmailService
+from validation_service import ValidationService  # type: ignore[import]
+from report_generator import ReportGenerator      # type: ignore[import]
+from email_service import EmailService            # type: ignore[import]
 
 # ---------------------------------------------------------------------------
 # Backward-compatible re-exports so existing callers of
 # "from scraper import DatabaseManager / PdpCache / ..." still work.
 # ---------------------------------------------------------------------------
-from database import DatabaseManager          # noqa: F811
-from cache import PdpCache, ProgressTracker   # noqa: F811
-from handlers import BasePageHandler          # noqa: F811
+from database import DatabaseManager          # noqa: F811  # type: ignore[import]
+from cache import PdpCache, ProgressTracker   # noqa: F811  # type: ignore[import]
+from handlers import BasePageHandler          # noqa: F811  # type: ignore[import]
 
 # ---------------------------------------------------------------------------
 # Logging (configured here once, at the application entry point)
@@ -74,11 +85,10 @@ class ScraperEngine:
             "RESULTS_PAGES": StreamHandler,
         }
 
-    def parse_urls(self):
-        """Parse urls.txt into a list of (type, url) tuples."""
-        import os, re
-        tasks = []
-        current_type = None
+    def parse_urls(self) -> List[Tuple[str, str]]:
+        """Parse urls.txt into a list of (page_type, url) tuples."""
+        tasks: List[Tuple[str, str]] = []
+        current_type: Optional[str] = None
 
         if not os.path.exists(self.urls_file):
             logging.error(f"URL file {self.urls_file} missing.")
@@ -90,10 +100,10 @@ class ScraperEngine:
                 if not line or line.startswith("#"):
                     continue
                 header_match = re.match(r"^\[(.*?)\]$", line)
-                if header_match:
+                if header_match is not None:  # narrow Optional[re.Match] -> re.Match
                     current_type = header_match.group(1).upper()
                 elif line.startswith("http"):
-                    if current_type:
+                    if current_type is not None:  # pyre-fixme[5]: narrow str | None -> str
                         tasks.append((current_type, line))
                     else:
                         logging.warning(f"URL found without category: {line}")
@@ -101,19 +111,19 @@ class ScraperEngine:
 
     def _run_viewport(
         self,
-        tasks: list,
+        tasks: List[Tuple[str, str]],
         label: str,
-        context_kwargs: dict,
+        context_kwargs: Dict[str, object],
         run_id: int,
-        pdp_cache: PdpCache = None,
-    ):
+        pdp_cache: Optional[PdpCache] = None,
+    ) -> None:
         """Scrape all tasks under one browser context (one viewport pass)."""
         progress = ProgressTracker(len(tasks), label)
         logging.info(f"[{label.upper()}] ▶  Starting — {len(tasks)} URLs")
 
         MAX_URL_WORKERS = max(1, WATCHDOG_MAX_WORKERS)
         logging.info(f"[{label.upper()}] Using MAX_WORKERS={MAX_URL_WORKERS}")
-        task_chunks = [tasks[i::MAX_URL_WORKERS] for i in range(MAX_URL_WORKERS)]
+        task_chunks: List[List[Tuple[str, str]]] = [list(tasks[i::MAX_URL_WORKERS]) for i in range(MAX_URL_WORKERS)]  # type: ignore[index]
         task_chunks = [c for c in task_chunks if c]
         if not task_chunks:
             logging.info(f"[{label.upper()}] ✔  No URLs to process")
@@ -217,7 +227,7 @@ class ScraperEngine:
                     )
 
         with ThreadPoolExecutor(max_workers=len(task_chunks)) as url_pool:
-            futures = [url_pool.submit(_scrape_worker, chunk) for chunk in task_chunks]
+            futures = [url_pool.submit(_scrape_worker, chunk) for chunk in task_chunks]  # type: ignore[arg-type]
             for future in as_completed(futures):
                 try:
                     future.result()
@@ -325,7 +335,7 @@ class ScraperEngine:
                 context_kwargs = viewport_context_map.get(vp_label, viewport_context_map["desktop"])
                 urls_only = [u for _, u in tasks]
                 _delete_old_rows(vp_label, urls_only)
-                f = pool.submit(
+                f = pool.submit(  # type: ignore[arg-type]
                     self._run_viewport, tasks, vp_label, context_kwargs, run_id, recheck_cache
                 )
                 futures[f] = vp_label
@@ -338,12 +348,7 @@ class ScraperEngine:
 
         logging.info("[RECHECK] ✔  Re-scrape complete.")
 
-    def run(self):
-        from handlers import (
-            WATCHDOG_WAIT_MS, WATCHDOG_RETRIES, WATCHDOG_RETRY_BACKOFF_MS,
-            WATCHDOG_FAIL_ON_EMPTY, WATCHDOG_ARTIFACT_DIR,
-        )
-
+    def run(self) -> None:
         tasks = self.parse_urls()
         if not tasks:
             logging.warning("No scraping tasks found.")
@@ -386,7 +391,7 @@ class ScraperEngine:
         )
         with ThreadPoolExecutor(max_workers=2) as pool:
             futures = {
-                pool.submit(
+                pool.submit(  # type: ignore[arg-type]
                     self._run_viewport, tasks, label, kwargs, run_id, pdp_cache
                 ): label
                 for label, kwargs in viewport_configs

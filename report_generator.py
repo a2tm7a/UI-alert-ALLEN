@@ -9,8 +9,8 @@ import sqlite3
 import logging
 from datetime import datetime
 from typing import List, Optional
-from validation_service import ValidationService
-from constants import SEVERITY_ICONS, SEVERITY_ORDER
+from validation_service import ValidationService  # type: ignore[import]
+from constants import SEVERITY_ICONS, SEVERITY_ORDER  # type: ignore[import]
 
 
 REPORTS_DIR = "reports"
