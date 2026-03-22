@@ -388,6 +388,7 @@ self.handler_map = {
 - [ ] Alert system — Slack webhook notifications (Phase 2)
 - [ ] YAML-based rule configuration (severity thresholds per alert channel)
 - [ ] DLP course support (currently skipped upstream)
+- [ ] Add validations of Starting date in PDP
 
 ### Phase 2 — Alert Channels
 

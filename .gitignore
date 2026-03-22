@@ -12,3 +12,5 @@ reports/report_*.md
 email_config.json
 scraper.log
 scraped_data.db
+.DS_Store
+.claude/

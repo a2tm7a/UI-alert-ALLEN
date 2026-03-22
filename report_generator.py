@@ -34,6 +34,7 @@ class ReportGenerator:
         start_time: datetime,
         urls_scraped: List[str],
         run_id: Optional[int] = None,
+        recheck_stats: Optional[dict] = None,
     ):
         self.vs = validation_service
         self.db_name = db_name
@@ -41,6 +42,8 @@ class ReportGenerator:
         self.end_time = datetime.now()
         self.urls_scraped = urls_scraped
         self.run_id = run_id
+        # recheck_stats keys: first_pass_issues, final_pass_issues, cleared_on_recheck
+        self.recheck_stats = recheck_stats or {}
 
     # ------------------------------------------------------------------
     # Public API
@@ -74,12 +77,49 @@ class ReportGenerator:
 
         sections = [
             self._section_header(duration_str),
+            self._section_recheck_summary(),
             self._section_summary(summary, db_stats),
             self._section_url_summary(issues),
             self._section_issue_breakdown(summary),
             self._section_details(issues),
         ]
         return "\n\n".join(sections) + "\n"
+
+    def _section_recheck_summary(self) -> str:
+        """Render the Re-QC pass summary block."""
+        if not self.recheck_stats:
+            return ""
+
+        first  = self.recheck_stats.get('first_pass_issues', 0)
+        final  = self.recheck_stats.get('final_pass_issues', 0)
+        cleared = self.recheck_stats.get('cleared_on_recheck', 0)
+
+        if first == 0:
+            recheck_note = "✅ No issues found in the first pass — recheck pass skipped."
+        elif cleared == 0:
+            recheck_note = (
+                f"⚠️ All **{first}** issue(s) persisted after the recheck pass "
+                f"— these are likely genuine failures."
+            )
+        else:
+            recheck_note = (
+                f"🔄 **{cleared}** of **{first}** issue(s) self-healed on recheck "
+                f"(transient/technical failures). "
+                f"**{final}** issue(s) remain as genuine, persistent problems."
+            )
+
+        lines = [
+            "## Re-QC Summary",
+            "",
+            "| Pass | Issues Found |",
+            "|------|--------------|",
+            f"| Initial validation pass | {first} |",
+            f"| Cleared on re-check ✅ | {cleared} |",
+            f"| **Persistent issues (final)** | **{final}** |",
+            "",
+            recheck_note,
+        ]
+        return "\n".join(lines)
 
     def _section_header(self, duration_str: str) -> str:
         lines = [

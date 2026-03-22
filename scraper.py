@@ -226,6 +226,118 @@ class ScraperEngine:
 
         logging.info(f"[{label.upper()}] ✔  All {len(tasks)} URLs done")
 
+    def recheck_failing_urls(
+        self,
+        failing_issues: list,
+        run_id: int,
+        mobile_kwargs: dict,
+    ) -> None:
+        """
+        Re-scrape only the (base_url, viewport) pairs that had at least one
+        validation issue in the first pass.
+
+        This lets us distinguish genuine issues from transient technical
+        failures (bot-detection blips, network timeouts, etc.)  Any course
+        that passes on the second scrape will have its DB row updated with
+        clean data, so the subsequent validation call will no longer flag it.
+
+        Args:
+            failing_issues: List[ValidationResult] from the first pass.
+            run_id:         Current run identifier (scopes DB updates).
+            mobile_kwargs:  Playwright device descriptor for the mobile context.
+        """
+        # Collect unique (base_url, viewport) pairs that need a recheck
+        failing_pairs: set = set()
+        for issue in failing_issues:
+            base_url = getattr(issue, 'base_url', None)
+            viewport = getattr(issue, 'viewport', 'desktop')
+            if base_url and base_url not in ('Unknown', 'Unknown URL'):
+                failing_pairs.add((base_url, viewport))
+
+        if not failing_pairs:
+            logging.info("[RECHECK] No failing URLs to re-scrape — skipping recheck pass.")
+            return
+
+        logging.info("")
+        logging.info("=" * 60)
+        logging.info(f"[RECHECK] Re-scraping {len(failing_pairs)} failing URL+viewport pair(s)...")
+        logging.info("=" * 60)
+
+        DESKTOP_UA = (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/131.0.0.0 Safari/537.36"
+        )
+        viewport_context_map = {
+            "desktop": {
+                "viewport": {"width": 1920, "height": 1080},
+                "user_agent": DESKTOP_UA,
+                "locale": "en-IN",
+                "extra_http_headers": {"Accept-Language": "en-IN,en-US;q=0.9,en;q=0.8"},
+            },
+            "mobile": mobile_kwargs,
+        }
+
+        # Group by viewport so we open one browser context per viewport type
+        by_viewport: dict = {}
+        for base_url, viewport in failing_pairs:
+            # Infer the page type (tag) from what was originally used
+            tag = None
+            for t, u in self.parse_urls():
+                if u == base_url:
+                    tag = t
+                    break
+            if tag is None:
+                # Best-effort fallback: guess from URL pattern
+                if "/online-coaching-" in base_url or "/neet/" in base_url:
+                    tag = "PLP_PAGES"
+                elif "/international-olympiads" in base_url:
+                    tag = "STREAM_PAGES"
+                elif base_url.strip("/") == "https://allen.in":
+                    tag = "HOME"
+                else:
+                    tag = "STREAM_PAGES"  # Fallback — handles RESULTS_PAGES too
+            by_viewport.setdefault(viewport, []).append((tag, base_url))
+
+        # Use a fresh cache so stale first-pass results don't bleed in
+        recheck_cache = PdpCache()
+
+        def _delete_old_rows(viewport_label: str, urls: list):
+            """Remove the first-pass rows for these URLs so fresh data replaces them."""
+            import sqlite3
+            placeholders = ",".join(["?"] * len(urls))
+            with sqlite3.connect(self.db.db_name, timeout=30) as conn:
+                conn.execute(
+                    f"DELETE FROM courses "
+                    f"WHERE run_id=? AND viewport=? AND base_url IN ({placeholders})",
+                    [run_id, viewport_label] + urls,
+                )
+                conn.commit()
+            logging.info(
+                f"[RECHECK][{viewport_label.upper()}] "
+                f"Deleted {len(urls)} old row(s) for re-scrape."
+            )
+
+        from concurrent.futures import ThreadPoolExecutor, as_completed as _as_completed
+        with ThreadPoolExecutor(max_workers=len(by_viewport)) as pool:
+            futures = {}
+            for vp_label, tasks in by_viewport.items():
+                context_kwargs = viewport_context_map.get(vp_label, viewport_context_map["desktop"])
+                urls_only = [u for _, u in tasks]
+                _delete_old_rows(vp_label, urls_only)
+                f = pool.submit(
+                    self._run_viewport, tasks, vp_label, context_kwargs, run_id, recheck_cache
+                )
+                futures[f] = vp_label
+            for future in _as_completed(futures):
+                vp_label = futures[future]
+                try:
+                    future.result()
+                except Exception as e:
+                    logging.error(f"[RECHECK][{vp_label.upper()}] Recheck pass failed: {e}")
+
+        logging.info("[RECHECK] ✔  Re-scrape complete.")
+
     def run(self):
         from handlers import (
             WATCHDOG_WAIT_MS, WATCHDOG_RETRIES, WATCHDOG_RETRY_BACKOFF_MS,
@@ -294,20 +406,55 @@ class ScraperEngine:
         logging.info("")
         logging.info("Running validation checks across all viewports...")
         validator = ValidationService(self.db.db_name)
-        validator.validate_all_courses(run_id=run_id)
+        first_pass_issues = validator.validate_all_courses(run_id=run_id)
+        first_pass_count  = len(first_pass_issues)
         validator.log_results()
 
+        # ------------------------------------------------------------------
+        # Re-QC pass: re-scrape every failing (URL, viewport) pair once more.
+        # Transient technical failures (bot-detect blips, timeouts) often
+        # self-heal on a second attempt.  We update the DB rows in-place so
+        # the final validation reflects only genuine, persistent issues.
+        # ------------------------------------------------------------------
+        with sync_playwright() as p:
+            mobile_kwargs = dict(p.devices[MOBILE_DEVICE])
+
+        self.recheck_failing_urls(
+            failing_issues=first_pass_issues,
+            run_id=run_id,
+            mobile_kwargs=mobile_kwargs,
+        )
+
+        logging.info("")
+        logging.info("[RECHECK] Running final validation after re-check pass...")
+        final_validator = ValidationService(self.db.db_name)
+        final_pass_issues = final_validator.validate_all_courses(run_id=run_id)
+        final_pass_count  = len(final_pass_issues)
+        final_validator.log_results()
+
+        cleared_count = max(0, first_pass_count - final_pass_count)
+        logging.info(
+            f"[RECHECK] First pass: {first_pass_count} issue(s) | "
+            f"After recheck: {final_pass_count} issue(s) | "
+            f"Cleared on recheck: {cleared_count}"
+        )
+
         report_file = ReportGenerator(
-            validation_service=validator,
+            validation_service=final_validator,
             db_name=self.db.db_name,
             start_time=start_time,
             urls_scraped=url_list,
             run_id=run_id,
+            recheck_stats={
+                "first_pass_issues":  first_pass_count,
+                "final_pass_issues":  final_pass_count,
+                "cleared_on_recheck": cleared_count,
+            },
         ).save()
 
         EmailService().send_report(
             report_path=report_file,
-            validation_summary=validator.get_summary(),
+            validation_summary=final_validator.get_summary(),
             run_id=run_id,
             start_time=start_time,
         )
