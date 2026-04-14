@@ -581,21 +581,32 @@ class ScraperEngine:
                         auth_recheck_issues = final_validator.validate_all_courses(run_id=auth_run_id)
                         final_validator.log_results()
 
-                    auth_report_gen = ReportGenerator(
-                        issues=auth_issues,
-                        recheck_issues=auth_recheck_issues,
+                    # Use final_validator if re-QC ran, otherwise auth_validator
+                    _report_validator = final_validator if auth_recheck_count else auth_validator
+                    auth_recheck_stats = {
+                        "first_pass_issues":  len(auth_issues),
+                        "final_pass_issues":  len(auth_recheck_issues),
+                        "cleared_on_recheck": max(0, len(auth_issues) - len(auth_recheck_issues)),
+                    } if auth_recheck_count else {}
+
+                    auth_report_path = ReportGenerator(
+                        validation_service=_report_validator,
+                        db_name=self.db.db_name,
                         start_time=auth_start,
+                        urls_scraped=[url for _, url in tasks],
                         run_id=auth_run_id,
+                        recheck_stats=auth_recheck_stats,
                         mode="authenticated",
                         profile=profile,
-                    )
-                    auth_report_path = auth_report_gen.save()
+                    ).save()
                     logging.info("[AUTH:%s] Report: %s", profile, auth_report_path)
 
                     auth_email = EmailService()
                     auth_email.send_report(
                         report_path=auth_report_path,
-                        summary=auth_validator.get_summary(),
+                        validation_summary=_report_validator.get_summary(),
+                        run_id=auth_run_id,
+                        start_time=auth_start,
                         profile=profile,
                     )
 
