@@ -22,7 +22,9 @@ class DatabaseManager:
             conn.execute('''
                 CREATE TABLE IF NOT EXISTS runs (
                     run_id     INTEGER PRIMARY KEY AUTOINCREMENT,
-                    started_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    mode       TEXT NOT NULL DEFAULT 'guest',
+                    profile    TEXT
                 )
             ''')
             conn.execute('''
@@ -41,15 +43,28 @@ class DatabaseManager:
                     timestamp      DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
+            # Migration guards for existing databases
+            for col_def in [
+                "ALTER TABLE runs ADD COLUMN mode TEXT NOT NULL DEFAULT 'guest'",
+                "ALTER TABLE runs ADD COLUMN profile TEXT",
+            ]:
+                try:
+                    conn.execute(col_def)
+                    conn.commit()
+                except sqlite3.OperationalError:
+                    pass  # column already exists
 
-    def create_run(self) -> int:
+    def create_run(self, mode: str = "guest", profile: str | None = None) -> int:
         """Insert a new row into the runs table and return its run_id."""
         with sqlite3.connect(self.db_name, timeout=30) as conn:
             cursor = conn.cursor()
-            cursor.execute("INSERT INTO runs DEFAULT VALUES")
+            cursor.execute(
+                "INSERT INTO runs (mode, profile) VALUES (?, ?)",
+                (mode, profile),
+            )
             conn.commit()
             run_id = cursor.lastrowid
-            logging.info(f"Run #{run_id} started.")
+            logging.info(f"Run #{run_id} started (mode={mode}, profile={profile}).")
             return run_id
 
     def save_batch(self, courses, run_id: int):
