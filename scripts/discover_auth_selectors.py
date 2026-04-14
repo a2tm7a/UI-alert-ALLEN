@@ -252,60 +252,60 @@ def main() -> None:
         _dump_page_state(page, "Homepage (before sign-in click)")
         _dump_all_links(page)
 
-        # ── Step 2: Trigger sign-in modal / page ────────────────────────────
-        print("\nLooking for sign-in trigger...")
-        found_form = _try_click_signin(page)
+        # ── Step 2: Click nav "Login" button to open modal ──────────────────
+        print("\nStep 2: Opening login modal...")
+        try:
+            page.click("button[data-testid='loginCtaButton']", timeout=10_000)
+            page.wait_for_selector("button[data-testid='FormIdLoginButtonWeb']", timeout=10_000)
+            print("  ✓ Modal opened — 'Continue with Form ID' button visible")
+        except Exception as e:
+            print(f"  ✗ Could not open modal: {e}")
 
-        if not found_form:
-            # Fallback: try direct URL
-            print("  → No modal trigger found — trying /sign-in directly...")
-            page.goto(f"{BASE_URL}/sign-in", wait_until="networkidle", timeout=30_000)
+        _dump_page_state(page, "Login modal (before choosing flow)")
 
-        _dump_page_state(page, "Login form (after trigger / direct URL)")
+        # ── Step 3: Click "Continue with Form ID" ───────────────────────────
+        print("\nStep 3: Switching to Form ID flow...")
+        try:
+            page.click("button[data-testid='FormIdLoginButtonWeb']", timeout=5_000)
+            time.sleep(1)
+            print("  ✓ Clicked 'Continue with Form ID'")
+        except Exception as e:
+            print(f"  ✗ Could not click Form ID button: {e}")
 
-        # ── Step 3: Fill form and submit ────────────────────────────────────
-        print("\nAttempting to fill login form...")
-        phone_sel  = "input[type='tel'], input[type='email'], input[name*='phone'], input[name*='mobile'], input[placeholder*='Phone'], input[placeholder*='phone'], input[placeholder*='Mobile'], input[placeholder*='email']"
-        pass_sel   = "input[type='password']"
-        submit_sel = "button[type='submit'], button:has-text('Sign In'), button:has-text('Login'), button:has-text('Continue'), button:has-text('Verify')"
+        _dump_page_state(page, ">>> After 'Continue with Form ID' — COPY THESE INPUT SELECTORS <<<")
+
+        # ── Step 4: Fill credentials and submit ─────────────────────────────
+        print("\nStep 4: Filling Form ID credentials...")
+        form_id_sel = "input[name='formId'], input[placeholder*='Form ID'], input[placeholder*='form id'], input[type='text']:visible"
+        pass_sel    = "input[type='password']"
+        submit_sel  = "button[type='submit'], button:has-text('Login'), button:has-text('Sign In')"
 
         try:
-            page.fill(phone_sel, creds["form_id"], timeout=5_000)
-            short_sel = repr(phone_sel)[:60]
-            print(f"  ✓ Filled form_id using: {short_sel}")
+            page.fill(form_id_sel, creds["form_id"], timeout=5_000)
+            print("  ✓ Filled form_id")
         except Exception as e:
             print(f"  ✗ Could not fill form_id: {e}")
 
-        # Some sites send OTP first — check for a Continue / Send OTP button
-        try:
-            cont = page.query_selector("button:has-text('Continue'), button:has-text('Send OTP'), button:has-text('Get OTP')")
-            if cont:
-                btn_text = cont.inner_text().strip()
-                print(f"  → Intermediate button found: {btn_text!r} — clicking it")
-                cont.click()
-                time.sleep(2)
-                _dump_page_state(page, f"After clicking '{btn_text}'")
-        except Exception:
-            pass
-
         try:
             page.fill(pass_sel, creds["password"], timeout=5_000)
-            print(f"  ✓ Filled password")
+            print("  ✓ Filled password")
         except Exception as e:
             print(f"  ✗ Could not fill password: {e}")
 
         try:
             page.click(submit_sel, timeout=5_000)
             page.wait_for_load_state("networkidle", timeout=15_000)
-            print(f"  ✓ Submitted login form")
+            print("  ✓ Submitted login form")
         except Exception as e:
             print(f"  ✗ Could not submit: {e}")
 
         _dump_page_state(page, "After login attempt")
         print(f"\n  Final URL: {page.url}")
 
-        logged_in = "/sign-in" not in page.url and "/login" not in page.url
-        print(f"  Login success (heuristic): {logged_in}")
+        # Login confirmed when the nav "Login" button is gone
+        nav_btn = page.query_selector("button[data-testid='loginCtaButton']")
+        logged_in = not (nav_btn and nav_btn.is_visible())
+        print(f"  Login success (nav Login btn gone): {logged_in}")
 
         # ── Step 4: Post-login — stream switcher ────────────────────────────
         if logged_in:

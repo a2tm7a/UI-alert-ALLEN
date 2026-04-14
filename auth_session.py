@@ -36,45 +36,53 @@ from typing import Optional
 from playwright.sync_api import BrowserContext, Page
 
 # ---------------------------------------------------------------------------
-# Selectors
-# TODO: Run scripts/discover_auth_selectors.py against live allen.in and
-#       replace these placeholders with the actual selectors found.
+# Selectors — confirmed via scripts/discover_auth_selectors.py on 2026-04-15
 # ---------------------------------------------------------------------------
 
-# Login page URL — try /sign-in first; update if allen.in uses a different path
-LOGIN_URL = "https://allen.in/sign-in"
+# allen.in uses a modal login triggered from the homepage nav bar.
+# The modal offers three flows; we use the Form ID flow.
+BASE_URL = "https://allen.in"
 
-# Input field for the username / phone / form_id
-FORM_ID_SELECTOR = "input[name='username'], input[name='phone'], input[type='tel'], input[placeholder*='Phone'], input[placeholder*='phone'], input[placeholder*='Mobile']"
+# Step 1: Nav "Login" button that opens the modal
+NAV_LOGIN_BUTTON = "button[data-testid='loginCtaButton']"
 
-# Password input
+# Step 2: "Continue with Form ID" button inside the modal
+FORM_ID_FLOW_BUTTON = "button[data-testid='FormIdLoginButtonWeb']"
+
+# Step 3: Form ID input (appears after clicking Continue with Form ID)
+# TODO: confirm selector by running discover_auth_selectors.py and clicking
+#       "Continue with Form ID" to see what input appears.
+FORM_ID_INPUT = "input[name='formId'], input[placeholder*='Form ID'], input[placeholder*='form id'], input[type='text']:visible"
+
+# Step 4: Password input
 PASSWORD_SELECTOR = "input[type='password']"
 
-# Submit / login button
-SUBMIT_SELECTOR = "button[type='submit']"
+# Step 5: Submit button inside the Form ID login form
+SUBMIT_SELECTOR = "button[type='submit'], button:has-text('Login'), button:has-text('Sign In')"
 
-# URL fragment that confirms a successful login (update after discovery)
-LOGIN_SUCCESS_INDICATORS = ["/dashboard", "/home", "/profile"]
+# Confirms a successful login — nav "Login" button disappears and a user
+# avatar / profile icon appears. We detect login by absence of the nav button.
+NAV_LOGIN_STILL_VISIBLE = "button[data-testid='loginCtaButton']"
 
-# Indicators in URL or page text that signal session expiry
+# Indicators in URL or page text that signal session expiry / logged-out state
 SESSION_EXPIRY_INDICATORS = [
-    "sign-in",
-    "/login",
     "session expired",
     "please log in",
     "please sign in",
 ]
 
 # Stream profile → selector mapping for the stream-switcher UI
-# TODO: Run discover_auth_selectors.py post-login to find the actual selectors.
-# These are best-guess placeholders based on common allen.in UI patterns.
+# TODO: confirm post-login by running discover_auth_selectors.py while logged in.
+# The nav links for JEE / NEET / Class 6-10 are present on the homepage;
+# for authenticated profile switching there may be a separate user-profile
+# dropdown. Update once discovered.
 STREAM_SELECTORS: dict[str, str] = {
-    "JEE":        "[data-stream='JEE'], [data-value='JEE'], a:has-text('JEE'), button:has-text('JEE')",
-    "NEET":       "[data-stream='NEET'], [data-value='NEET'], a:has-text('NEET'), button:has-text('NEET')",
-    "Classes610": "[data-stream='Classes 6-10'], a:has-text('Classes 6-10'), a:has-text('Class 6'), button:has-text('Classes 6-10')",
+    "JEE":        "a[href='/jee']:visible, a[href*='/jee']:visible",
+    "NEET":       "a[href='/neet']:visible, a[href*='/neet']:visible",
+    "Classes610": "a[href='/classes-6-10']:visible, a[href*='/class-6-10']:visible",
 }
 
-# URL to navigate to before switching profile (homepage, where switcher is visible)
+# URL to land on before switching profile
 PROFILE_SWITCH_BASE_URL = "https://allen.in"
 
 
@@ -139,7 +147,13 @@ class AuthSession:
 
     def login(self) -> None:
         """
-        Navigate to the login page, fill credentials, submit, and verify.
+        Log in via allen.in's modal Form ID flow:
+          1. Navigate to homepage
+          2. Click the nav "Login" button  → modal opens
+          3. Click "Continue with Form ID" → form_id + password inputs appear
+          4. Fill credentials and submit
+          5. Confirm login by checking nav "Login" button is gone
+
         Raises RuntimeError if login cannot be confirmed after 3 attempts.
         """
         logging.info("[AUTH] Starting login...")
@@ -148,16 +162,28 @@ class AuthSession:
 
         for attempt in range(1, 4):
             try:
-                self.page.goto(LOGIN_URL, wait_until="networkidle", timeout=30_000)
+                # Step 1 — land on homepage
+                self.page.goto(BASE_URL, wait_until="networkidle", timeout=30_000)
 
-                # Fill form_id / phone
-                self.page.fill(FORM_ID_SELECTOR, self._creds["form_id"])
-                # Fill password
+                # Step 2 — open the login modal
+                self.page.click(NAV_LOGIN_BUTTON, timeout=10_000)
+                # Wait for the "Continue with Form ID" button to confirm modal opened
+                self.page.wait_for_selector(FORM_ID_FLOW_BUTTON, timeout=10_000)
+                logging.info("[AUTH] Login modal opened.")
+
+                # Step 3 — switch to Form ID flow
+                self.page.click(FORM_ID_FLOW_BUTTON, timeout=5_000)
+                # Wait for the form_id input to appear
+                self.page.wait_for_selector(FORM_ID_INPUT, timeout=10_000)
+                logging.info("[AUTH] Form ID flow selected.")
+
+                # Step 4 — fill credentials
+                self.page.fill(FORM_ID_INPUT, self._creds["form_id"])
                 self.page.fill(PASSWORD_SELECTOR, self._creds["password"])
-                # Submit
                 self.page.click(SUBMIT_SELECTOR)
                 self.page.wait_for_load_state("networkidle", timeout=30_000)
 
+                # Step 5 — confirm login
                 if self._is_logged_in():
                     self._logged_in = True
                     logging.info("[AUTH] Login confirmed. URL: %s", self.page.url)
@@ -221,18 +247,20 @@ class AuthSession:
     # ------------------------------------------------------------------
 
     def _is_logged_in(self) -> bool:
-        """Return True if the current page looks like a post-login page."""
+        """
+        Return True if the nav "Login" button is gone — the most reliable
+        signal that allen.in considers us authenticated.
+        """
         if self.page is None:
             return False
-        url = self.page.url.lower()
-        # Negative check: we're NOT on the login page
-        on_login_page = any(ind in url for ind in SESSION_EXPIRY_INDICATORS)
-        if on_login_page:
+        try:
+            # If the nav Login button is still visible, we're not logged in
+            nav_btn = self.page.query_selector(NAV_LOGIN_STILL_VISIBLE)
+            if nav_btn and nav_btn.is_visible():
+                return False
+            return True
+        except Exception:
             return False
-        # Positive check: we ARE on a known post-login path
-        on_success = any(path in url for path in LOGIN_SUCCESS_INDICATORS)
-        # If neither clearly positive nor negative, assume success if URL changed
-        return on_success or url != LOGIN_URL.lower()
 
     def _ensure_session(self) -> None:
         """
