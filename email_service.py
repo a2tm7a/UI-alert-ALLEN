@@ -85,7 +85,7 @@ class EmailService:
     # ------------------------------------------------------------------
 
     def _load_config(self, path: str) -> dict:
-        # 1. Try JSON file first
+        # 1. Try JSON file first (fallback)
         cfg: dict = {}
         if os.path.exists(path):
             try:
@@ -94,47 +94,92 @@ class EmailService:
             except Exception as e:
                 logging.warning(f"Could not load email config: {e}")
 
-        # 2. Override / supplement with environment variables.
-        #    Environment variables can override/supplement the JSON config.
-        #    Any env var present takes precedence over the JSON value.
+        # 2. Environment variables take precedence over JSON config.
+        #    Priority order: WATCHDOG_* env vars > old EMAIL_* env vars > JSON file
         #
-        #    Required env vars:
-        #      EMAIL_USERNAME   — SMTP login (e.g. you@gmail.com)
-        #      EMAIL_PASSWORD   — SMTP App Password
-        #      EMAIL_TO         — comma-separated recipient list
-        #    Optional:
-        #      EMAIL_ENABLED    — "true" / "false"  (default: true if creds present)
-        #      EMAIL_SEND_ON    — "always" / "errors" / "never"  (default: errors)
-        #      EMAIL_FROM       — display name + address
-        #      EMAIL_HOST       — SMTP host  (default: smtp.gmail.com)
-        #      EMAIL_PORT       — SMTP port  (default: 587)
+        #    New WATCHDOG_* env vars (preferred):
+        #      WATCHDOG_SMTP_HOST      → smtp.host     (fallback: smtp.gmail.com)
+        #      WATCHDOG_SMTP_PORT      → smtp.port     (fallback: 587)
+        #      WATCHDOG_SMTP_USER      → smtp.username
+        #      WATCHDOG_SMTP_PASSWORD  → smtp.password
+        #      WATCHDOG_EMAIL_FROM     → from
+        #      WATCHDOG_EMAIL_TO       → to (comma-separated)
+        #      WATCHDOG_SEND_ON        → send_on       (fallback: errors)
+        #
+        #    Legacy EMAIL_* env vars (still supported for backward compatibility):
+        #      EMAIL_USERNAME, EMAIL_PASSWORD, EMAIL_TO, EMAIL_HOST, EMAIL_PORT, EMAIL_SEND_ON
 
-        env_username = os.environ.get("EMAIL_USERNAME", "")
-        env_password = os.environ.get("EMAIL_PASSWORD", "")
-        env_to       = os.environ.get("EMAIL_TO", "")
+        # Try WATCHDOG_* vars first
+        env_host = os.environ.get("WATCHDOG_SMTP_HOST", "")
+        env_port = os.environ.get("WATCHDOG_SMTP_PORT", "")
+        env_user = os.environ.get("WATCHDOG_SMTP_USER", "")
+        env_password = os.environ.get("WATCHDOG_SMTP_PASSWORD", "")
+        env_from = os.environ.get("WATCHDOG_EMAIL_FROM", "")
+        env_to = os.environ.get("WATCHDOG_EMAIL_TO", "")
+        env_send_on = os.environ.get("WATCHDOG_SEND_ON", "")
 
-        if env_username or env_password or env_to:
-            # Merge env vars on top of whatever the JSON said
+        # Fallback to legacy EMAIL_* vars if WATCHDOG_* not set
+        if not env_user:
+            env_user = os.environ.get("EMAIL_USERNAME", "")
+        if not env_password:
+            env_password = os.environ.get("EMAIL_PASSWORD", "")
+        if not env_to:
+            env_to = os.environ.get("EMAIL_TO", "")
+        if not env_host:
+            env_host = os.environ.get("EMAIL_HOST", "")
+        if not env_port:
+            env_port = os.environ.get("EMAIL_PORT", "")
+        if not env_send_on:
+            env_send_on = os.environ.get("EMAIL_SEND_ON", "")
+
+        # If any env var is set, merge on top of JSON config
+        if env_host or env_port or env_user or env_password or env_from or env_to or env_send_on:
             smtp = cfg.setdefault("smtp", {})
-            if env_username:
-                smtp["username"] = env_username
+
+            # SMTP host (highest priority: WATCHDOG_SMTP_HOST > EMAIL_HOST > JSON > default)
+            if env_host:
+                smtp["host"] = env_host
+            smtp.setdefault("host", "smtp.gmail.com")
+
+            # SMTP port (parse as int if provided)
+            if env_port:
+                try:
+                    smtp["port"] = int(env_port)
+                except (ValueError, TypeError):
+                    pass
+            smtp.setdefault("port", 587)
+
+            # SMTP username
+            if env_user:
+                smtp["username"] = env_user
+
+            # SMTP password
             if env_password:
                 smtp["password"] = env_password
-            smtp.setdefault("host", os.environ.get("EMAIL_HOST", "smtp.gmail.com"))
-            smtp.setdefault("port", int(os.environ.get("EMAIL_PORT", "587")))
+
+            # TLS always enabled (safe default)
             smtp.setdefault("use_tls", True)
 
+            # From address
+            if env_from:
+                cfg["from"] = env_from
+            cfg.setdefault("from", f"WatchDog <{env_user}>" if env_user else "WatchDog")
+
+            # Recipients (comma-separated string → list)
             if env_to:
                 cfg["to"] = [a.strip() for a in env_to.split(",") if a.strip()]
-            cfg.setdefault("from", os.environ.get(
-                "EMAIL_FROM",
-                f"WatchDog <{env_username}>" if env_username else "WatchDog"
-            ))
-            cfg.setdefault("send_on", os.environ.get("EMAIL_SEND_ON", "errors"))
+
+            # Send trigger policy
+            if env_send_on:
+                cfg["send_on"] = env_send_on
+            cfg.setdefault("send_on", "errors")
 
             # Auto-enable if creds are supplied via env
-            enabled_env = os.environ.get("EMAIL_ENABLED", "").lower()
-            cfg["enabled"] = (enabled_env != "false")
+            enabled_env = os.environ.get("WATCHDOG_ENABLED", "").lower() or os.environ.get("EMAIL_ENABLED", "").lower()
+            if enabled_env:
+                cfg["enabled"] = (enabled_env != "false")
+            else:
+                cfg.setdefault("enabled", bool(env_user or env_password or env_to))
 
         if not cfg:
             logging.debug("No email config found — email notifications disabled.")

@@ -10,7 +10,10 @@ __pycache__/
 reports/report_*.md
 # Email credentials — never commit
 email_config.json
-scraper.log
-scraped_data.db
+# Test account credentials — never commit
+test_credentials.json
+# Environment variables
+.env
+*.env
 .DS_Store
 .claude/

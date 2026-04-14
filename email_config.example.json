@@ -1,4 +1,5 @@
 {
+    "_comment": "Copy this file to email_config.json and fill in your credentials. Env var precedence (in order): WATCHDOG_SMTP_HOST > EMAIL_HOST > this file. See README.md for full environment variable documentation.",
     "enabled": true,
     "send_on": "errors",
     "smtp": {

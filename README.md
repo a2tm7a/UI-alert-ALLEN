@@ -134,10 +134,50 @@ Copy `email_config.example.json` and fill in your credentials:
 | `"errors"` | Send only when issues are found *(default)* |
 | `"never"` | Disable email entirely |
 
-> **Note:** Environment variables (`EMAIL_USERNAME`, `EMAIL_PASSWORD`, `EMAIL_TO`,
-> `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_SEND_ON`, `EMAIL_ENABLED`) can override
-> `email_config.json` values if set in your shell profile. This is useful if you
-> prefer not to store credentials in a JSON file.
+> **Note:** Environment variables can override `email_config.json` values if set in your shell profile. This is useful if you prefer not to store credentials in a JSON file.
+
+---
+
+## Environment Variables
+
+WatchDog supports the following environment variables for configuration. **WATCHDOG_* vars take precedence** over legacy `EMAIL_*` vars and JSON config files.
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `WATCHDOG_SMTP_HOST` | SMTP server hostname | `smtp.gmail.com` |
+| `WATCHDOG_SMTP_PORT` | SMTP server port | `587` |
+| `WATCHDOG_SMTP_USER` | SMTP login username | — |
+| `WATCHDOG_SMTP_PASSWORD` | SMTP password / app password | — |
+| `WATCHDOG_EMAIL_FROM` | Sender email address | `WatchDog <{username}>` |
+| `WATCHDOG_EMAIL_TO` | Recipient address(es), comma-separated | — |
+| `WATCHDOG_SEND_ON` | When to send alerts: `always` / `errors` / `never` | `errors` |
+| `WATCHDOG_ENABLED` | Enable/disable email entirely | `true` (if credentials present) |
+| `WATCHDOG_TEST_FORM_ID` | Test account form_id for authenticated scraping | — |
+| `WATCHDOG_TEST_PASSWORD` | Test account password for authenticated scraping | — |
+
+**Legacy env vars** (still supported for backward compatibility):
+- `EMAIL_USERNAME`, `EMAIL_PASSWORD`, `EMAIL_TO`, `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_SEND_ON`, `EMAIL_ENABLED`
+
+### Example: Setting credentials via environment
+
+```bash
+# Linux / macOS
+export WATCHDOG_SMTP_USER="you@gmail.com"
+export WATCHDOG_SMTP_PASSWORD="your-app-password"
+export WATCHDOG_EMAIL_FROM="WatchDog Team <team@example.com>"
+export WATCHDOG_EMAIL_TO="team@example.com"
+export WATCHDOG_SEND_ON="always"
+
+python3 scraper.py
+```
+
+```bash
+# Or set in a .env file and load it before running
+source .env
+python3 scraper.py
+```
+
+---
 
 ### Runtime Tuning (Environment Variables)
 
