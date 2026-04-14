@@ -48,6 +48,7 @@ from handlers import (  # type: ignore[import]
 from validation_service import ValidationService  # type: ignore[import]
 from report_generator import ReportGenerator      # type: ignore[import]
 from email_service import EmailService            # type: ignore[import]
+from auth_session import AuthSession              # type: ignore[import]
 
 # ---------------------------------------------------------------------------
 # Backward-compatible re-exports so existing callers of
@@ -68,6 +69,9 @@ logging.basicConfig(
 
 MOBILE_DEVICE = "iPhone XR"  # logical resolution 390x844, touch, mobile Safari UA
 STEALTH = Stealth()
+
+# Stream profiles for authenticated scraping (Phase 2)
+AUTH_PROFILES = ["JEE", "NEET", "Classes610"]
 
 
 # ---------------------------------------------------------------------------
@@ -463,6 +467,140 @@ class ScraperEngine:
             run_id=run_id,
             start_time=start_time,
         )
+
+        # -----------------------------------------------------------------------
+        # Phase 2 — Authenticated mode: one run per stream profile
+        # -----------------------------------------------------------------------
+        logging.info("")
+        logging.info("Starting authenticated runs (%d profiles)...", len(AUTH_PROFILES))
+
+        with sync_playwright() as p_auth:
+            mobile_kwargs_auth = dict(p_auth.devices[MOBILE_DEVICE])
+
+            # Launch a single browser for all authenticated profiles
+            auth_browser = p_auth.chromium.launch(headless=True)
+            auth_context = auth_browser.new_context(
+                viewport={"width": 1920, "height": 1080},
+                user_agent=DESKTOP_UA,
+                locale="en-IN",
+                extra_http_headers={"Accept-Language": "en-IN,en-US;q=0.9,en;q=0.8"},
+            )
+            STEALTH.apply_stealth_sync(auth_context)
+
+            session = AuthSession(auth_context)
+            try:
+                session.login()
+            except RuntimeError as login_err:
+                logging.error("[AUTH] Login failed — skipping all authenticated runs: %s", login_err)
+                auth_browser.close()
+            else:
+                for profile in AUTH_PROFILES:
+                    logging.info("")
+                    logging.info("=== Authenticated run: %s ===", profile)
+
+                    try:
+                        session.switch_profile(profile)
+                    except Exception as switch_err:
+                        logging.error(
+                            "[AUTH:%s] Profile switch failed — skipping: %s", profile, switch_err
+                        )
+                        continue
+
+                    auth_run_id   = self.db.create_run(mode="authenticated", profile=profile)
+                    auth_cache    = PdpCache()  # fresh cache per profile — no guest bleed
+                    auth_start    = datetime.now()
+
+                    # Build per-viewport context kwargs using storage_state from
+                    # the authenticated context so both viewports share the session
+                    try:
+                        storage = auth_context.storage_state()
+                    except Exception:
+                        storage = None
+
+                    auth_desktop_kwargs: Dict[str, object] = {
+                        "viewport":            {"width": 1920, "height": 1080},
+                        "user_agent":          DESKTOP_UA,
+                        "locale":              "en-IN",
+                        "extra_http_headers":  {"Accept-Language": "en-IN,en-US;q=0.9,en;q=0.8"},
+                    }
+                    auth_mobile_kwargs: Dict[str, object] = dict(mobile_kwargs_auth)
+                    if storage:
+                        auth_desktop_kwargs["storage_state"] = storage
+                        auth_mobile_kwargs["storage_state"]  = storage
+
+                    auth_viewport_configs = [
+                        ("desktop", auth_desktop_kwargs),
+                        ("mobile",  auth_mobile_kwargs),
+                    ]
+
+                    with ThreadPoolExecutor(max_workers=2) as auth_pool:
+                        auth_futures = {
+                            auth_pool.submit(
+                                self._run_viewport, tasks, label, kwargs,
+                                auth_run_id, auth_cache
+                            ): label
+                            for label, kwargs in auth_viewport_configs
+                        }
+                        for fut in as_completed(auth_futures):
+                            lbl = auth_futures[fut]
+                            try:
+                                fut.result()
+                            except Exception as e:
+                                logging.error("[AUTH:%s][%s] Viewport failed: %s", profile, lbl.upper(), e)
+
+                    logging.info("[AUTH:%s] Validating...", profile)
+                    auth_validator = ValidationService(self.db.db_name)
+                    auth_issues    = auth_validator.validate_all_courses(run_id=auth_run_id)
+                    auth_validator.log_results()
+
+                    # Re-QC pass for authenticated run
+                    auth_recheck_issues: list = []
+                    auth_recheck_count = len(auth_issues)
+                    if auth_recheck_count:
+                        logging.info(
+                            "[AUTH:%s] Re-QC: re-scraping %d failing pairs...",
+                            profile, auth_recheck_count,
+                        )
+                        recheck_cache = ProgressTracker()
+                        with ThreadPoolExecutor(max_workers=2) as rpool:
+                            rfutures = {
+                                rpool.submit(
+                                    self._run_viewport, tasks, label,
+                                    auth_desktop_kwargs if label == "desktop" else auth_mobile_kwargs,
+                                    auth_run_id, auth_cache, recheck_cache
+                                ): label
+                                for label in ("desktop", "mobile")
+                            }
+                            for rfut in as_completed(rfutures):
+                                try:
+                                    rfut.result()
+                                except Exception as re:
+                                    logging.error("[AUTH:%s] Re-QC viewport failed: %s", profile, re)
+
+                        final_validator = ValidationService(self.db.db_name)
+                        auth_recheck_issues = final_validator.validate_all_courses(run_id=auth_run_id)
+                        final_validator.log_results()
+
+                    auth_report_gen = ReportGenerator(
+                        issues=auth_issues,
+                        recheck_issues=auth_recheck_issues,
+                        start_time=auth_start,
+                        run_id=auth_run_id,
+                        mode="authenticated",
+                        profile=profile,
+                    )
+                    auth_report_path = auth_report_gen.save()
+                    logging.info("[AUTH:%s] Report: %s", profile, auth_report_path)
+
+                    auth_email = EmailService()
+                    auth_email.send_report(
+                        report_path=auth_report_path,
+                        summary=auth_validator.get_summary(),
+                        profile=profile,
+                    )
+
+                session.close()
+                auth_browser.close()
 
 
 if __name__ == "__main__":
