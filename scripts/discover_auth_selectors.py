@@ -202,7 +202,8 @@ def main() -> None:
 
         try:
             page.fill(phone_sel, creds["form_id"], timeout=5_000)
-            print(f"  ✓ Filled form_id using: {phone_sel!r[:60]}")
+            short_sel = repr(phone_sel)[:60]
+            print(f"  ✓ Filled form_id using: {short_sel}")
         except Exception as e:
             print(f"  ✗ Could not fill form_id: {e}")
 
