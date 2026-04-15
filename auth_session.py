@@ -30,6 +30,7 @@ Usage::
 import json
 import logging
 import os
+import re
 import time
 from typing import Any, Optional
 
@@ -46,11 +47,12 @@ BASE_URL = "https://allen.in"
 # Step 1: Nav "Login" button that opens the modal
 NAV_LOGIN_BUTTON = "button[data-testid='loginCtaButton']"
 
-# Step 2: "Continue with Form ID" inside the modal (site may rename testids).
+# Step 3 (login drawer): "Continue with Form ID" — scope clicks to login_drawer_locator().
 FORM_ID_FLOW_BUTTON = (
     "button[data-testid='FormIdLoginButtonWeb'], "
     "button[data-testid*='FormIdLogin'], "
     "button:has-text('Continue with Form ID'), "
+    "button:has-text('Continue with form ID'), "
     "button:has-text('Form ID')"
 )
 
@@ -177,6 +179,35 @@ def _dismiss_optional_overlays(page: Page) -> None:
                     continue
     except Exception:
         pass
+
+
+def login_drawer_locator(page: Page) -> Locator:
+    """
+    The login UI is a drawer/modal: a [role="dialog"] that contains the method
+    picker (Form ID vs OTP vs username). Scoping step 3 here avoids clicking
+    hidden duplicate buttons outside the open drawer.
+    """
+    method_picker = (
+        "button[data-testid='FormIdLoginButtonWeb'], "
+        "button[data-testid*='FormIdLogin'], "
+        "button[data-testid='submitOTPButton'], "
+        "button[data-testid='usernameLoginButtonWeb']"
+    )
+    drawer = page.locator('[role="dialog"]').filter(has=page.locator(method_picker))
+    if drawer.count() > 0:
+        try:
+            drawer.first.wait_for(state="visible", timeout=_AUTH_MODAL_OPEN_MS)
+            return drawer.first
+        except Exception:
+            pass
+    any_dlg = page.locator('[role="dialog"]')
+    if any_dlg.count() > 0:
+        try:
+            any_dlg.first.wait_for(state="visible", timeout=min(12_000, _AUTH_MODAL_OPEN_MS))
+            return any_dlg.first
+        except Exception:
+            pass
+    return page.locator("body")
 
 
 def _auth_ui_snapshot(page: Page) -> dict[str, Any]:
@@ -372,23 +403,41 @@ class AuthSession:
                     pass
                 self._auth_trace(attempt, last_step)
 
+                last_step = "wait_login_drawer"
+                login_drawer = login_drawer_locator(self.page)
+                self._auth_trace(attempt, last_step)
+
                 last_step = "wait_form_id_flow"
-                form_id_flow_loc = self.page.locator(FORM_ID_FLOW_BUTTON)
+                # Explicit label match inside the login drawer (case-insensitive).
+                form_id_by_role = login_drawer.get_by_role(
+                    "button",
+                    name=re.compile(r"continue\s+with\s+form\s*id", re.I),
+                )
+                form_id_flow_loc = login_drawer.locator(FORM_ID_FLOW_BUTTON)
                 try:
-                    form_id_flow_loc.first.wait_for(
-                        state="visible", timeout=_AUTH_MODAL_OPEN_MS
-                    )
+                    try:
+                        form_id_by_role.first.wait_for(
+                            state="visible", timeout=min(8_000, _AUTH_MODAL_OPEN_MS)
+                        )
+                    except Exception:
+                        pass
+                    if form_id_by_role.count() > 0 and form_id_by_role.first.is_visible():
+                        form_id_flow_loc = form_id_by_role
+                    else:
+                        form_id_flow_loc.first.wait_for(
+                            state="visible", timeout=_AUTH_MODAL_OPEN_MS
+                        )
                 except Exception as wait_exc:
                     n = form_id_flow_loc.count()
                     logging.warning(
-                        "[AUTH] Form ID flow control not visible (matches=%s): %s",
+                        "[AUTH] Form ID flow control not visible in login drawer (matches=%s): %s",
                         n,
                         wait_exc,
                     )
                     raise
-                logging.info("[AUTH] Login modal opened.")
+                logging.info("[AUTH] Login drawer open; Continue with Form ID control visible.")
 
-                # Step 3 — click "Continue with Form ID" (now confirmed visible)
+                # Step 3 — click "Continue with Form ID" inside the login drawer
                 last_step = "click_form_id_flow"
                 form_id_flow_loc.first.click(timeout=15_000)
                 time.sleep(0.5)  # allow form transition animation

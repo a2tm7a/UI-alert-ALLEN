@@ -30,12 +30,14 @@ from playwright.sync_api import sync_playwright, Page
 from playwright_stealth import Stealth
 
 from auth_session import (
+    FORM_ID_FLOW_BUTTON,
     FORM_ID_INPUT_INNER,
     PASSWORD_INNER,
     POST_LOAD_LATE_POPUP_SEC,
     SUBMIT_INNER,
     _dismiss_optional_overlays,
     _load_credentials,
+    login_drawer_locator,
     login_modal_locator,
 )
 
@@ -312,34 +314,34 @@ def main() -> None:
         except Exception as e:
             print(f"  ✗ Could not click nav Login button: {e}")
 
-        # Wait for FormIdLoginButtonWeb to become VISIBLE (not just in DOM)
-        # before reporting — this is the reliable signal the modal is open.
-        try:
-            form_id_btn = page.locator("button[data-testid='FormIdLoginButtonWeb']")
-            form_id_btn.first.wait_for(state="visible", timeout=25_000)
-            print("  ✓ Modal open confirmed — FormIdLoginButtonWeb is visible")
-        except Exception as e:
-            print(f"  ✗ Modal did not open (FormIdLoginButtonWeb never became visible): {e}")
+        # Login drawer = dialog that contains the method picker (scoped like AuthSession.login).
+        login_drawer = login_drawer_locator(page)
 
-        # Report which modal buttons are now visible
+        # Wait for "Continue with Form ID" control inside the drawer (not global DOM).
+        try:
+            form_id_btn = login_drawer.locator(FORM_ID_FLOW_BUTTON)
+            form_id_btn.first.wait_for(state="visible", timeout=25_000)
+            print("  ✓ Login drawer open — Form ID entry control visible inside drawer")
+        except Exception as e:
+            print(f"  ✗ Login drawer / Form ID control not visible: {e}")
+
+        # Report which modal buttons are now visible (scoped to drawer)
         for testid in ["submitOTPButton", "FormIdLoginButtonWeb", "usernameLoginButtonWeb"]:
-            loc = page.locator(f"button[data-testid='{testid}']")
+            loc = login_drawer.locator(f"button[data-testid='{testid}']")
             count = loc.count()
             visible = sum(1 for i in range(count) if loc.nth(i).is_visible())
-            print(f"  {testid}: {count} in DOM, {visible} visible")
+            print(f"  {testid}: {count} in DOM, {visible} visible (in drawer)")
 
-        # ── Step 3: Click "Continue with Form ID" (first VISIBLE instance) ──
-        # The locator already points to the visible one after wait_for above;
-        # click it directly.
-        print("\nStep 3: Switching to Form ID flow...")
+        # ── Step 3: Click "Continue with Form ID" inside the login drawer ──
+        print("\nStep 3: Clicking Continue with Form ID in login drawer...")
         try:
-            form_id_btn = page.locator("button[data-testid='FormIdLoginButtonWeb']")
+            form_id_btn = login_drawer.locator(FORM_ID_FLOW_BUTTON)
             form_id_btn.first.wait_for(state="visible", timeout=25_000)
             form_id_btn.first.click(timeout=15_000)
             time.sleep(0.6)  # form transition animation
-            print("  ✓ Clicked 'Continue with Form ID' (first visible)")
+            print("  ✓ Clicked Continue with Form ID (drawer-scoped)")
         except Exception as e:
-            print(f"  ✗ Could not click Form ID button: {e}")
+            print(f"  ✗ Could not click Form ID button in drawer: {e}")
 
         _dump_page_state(page, ">>> After 'Continue with Form ID' — COPY THESE INPUT SELECTORS <<<")
 

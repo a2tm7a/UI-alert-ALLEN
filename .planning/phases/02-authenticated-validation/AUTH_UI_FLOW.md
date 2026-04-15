@@ -13,7 +13,7 @@ Single source of truth for what WatchDog **assumes** about the site, how that ma
 | 0 | Homepage loaded | (none) | `allen.in` / SPA shell | `_goto_spa_no_networkidle`, post-load sleep, `_dismiss_optional_overlays` |
 | 1 | Homepage with nav | Optional promos dismissed | Nav visible | Waits + overlay handling |
 | 2 | Login modal closed | Click **Login** (`loginCtaButton`) | Modal opens | Click `NAV_LOGIN_BUTTON` |
-| 3 | Modal — method picker | Click **Continue with Form ID** | Form ID + password fields | Wait `FORM_ID_FLOW_BUTTON`, click |
+| 3 | Modal — method picker | Click **Continue with Form ID** (inside login drawer only) | Form ID + password fields | `login_drawer_locator` → `get_by_role` / `FORM_ID_FLOW_BUTTON` scoped to drawer |
 | 4 | Modal — credentials | Enter Form ID + password | Fields filled | Scoped fills inside `[role="dialog"]` when present |
 | 5 | Modal — submit | Submit | Navigation or SPA update | `SUBMIT_INNER` + `wait_for_load_state` |
 | 6 | Logged in | (none) | Nav **Login** CTA hidden; optional profile / Log out UI | `_is_logged_in`: nav hidden + optional positive selectors |
