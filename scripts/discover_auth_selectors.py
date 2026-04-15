@@ -1,7 +1,8 @@
 """
 WatchDog — Auth Selector Discovery
 ===================================
-Run this script to inspect the allen.in login flow and profile-switching UI.
+Run this script to inspect the allen.in login flow and the **profile** Change UI
+(``/profile`` → Change → stream / class / board).
 
 It navigates the homepage, tries to trigger the login modal by clicking
 sign-in buttons, waits for the form to appear, then prints everything needed
@@ -21,11 +22,26 @@ Navigation uses domcontentloaded+load (not networkidle). Override ms if needed:
 
 Headed window size (~13" MacBook Air content area, default 1440×900):
     WATCHDOG_HEADED_VIEWPORT_WIDTH=1280 WATCHDOG_HEADED_VIEWPORT_HEIGHT=800 HEADLESS=0 ...
+
+**Live profile switch (optional, mutates the signed-in account):**
+
+    WATCHDOG_DISCOVER_PROFILE_STREAM=JEE HEADLESS=0 python3 scripts/discover_auth_selectors.py
+
+Same as ``AuthSession.switch_profile``: ``/profile`` → Change → stream → optional
+class / board → Save. Reuses ``WATCHDOG_PROFILE_CLASS`` and ``WATCHDOG_PROFILE_BOARD``
+(``WATCHDOG_PROFILE_BOARD`` matters when stream is ``Classes610``). Set
+``WATCHDOG_AUTH_DEBUG=1`` to capture screenshots on login failure inside
+``AuthSession`` only; discover prints errors on switch failure.
+
+For **profile / JEE pill** issues, set ``WATCHDOG_PROFILE_DEBUG=1`` to emit
+``[AUTH][profile]`` logs and write ``reports/profile-debug-*.txt`` + ``.png``.
 """
 
+import logging
 import os
 import sys
 import time
+from typing import Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
@@ -36,6 +52,9 @@ from auth_session import (
     FORM_ID_FIELD_SELECTORS,
     PASSWORD_INNER,
     POST_LOAD_LATE_POPUP_SEC,
+    PROFILE_CHANGE_BUTTON,
+    PROFILE_PAGE_URL,
+    PROFILE_STREAM_LABELS,
     _dismiss_optional_overlays,
     _load_credentials,
     click_first_visible_submit_in_scope,
@@ -43,6 +62,7 @@ from auth_session import (
     fill_first_visible_in_scope,
     login_credentials_panel_locator,
     login_drawer_locator,
+    run_profile_change_flow,
 )
 
 STEALTH   = Stealth()
@@ -235,16 +255,53 @@ def _try_click_signin(page: Page) -> bool:
     return False
 
 
-def _dump_post_login_stream_switcher(page: Page) -> None:
-    """After login, look for the stream / class switcher UI."""
+def _goto_profile(page: Page) -> None:
+    timeout_ms = int(os.environ.get("WATCHDOG_GOTO_TIMEOUT_MS", "60000"))
+    page.goto(PROFILE_PAGE_URL, wait_until="domcontentloaded", timeout=timeout_ms)
+    try:
+        page.wait_for_load_state("load", timeout=min(25_000, timeout_ms))
+    except Exception:
+        pass
+    time.sleep(0.4)
+
+
+def _dump_post_login_profile_change(page: Page) -> None:
+    """After login, open ``/profile`` and print Change + stream-related controls."""
     print("\n" + "=" * 70)
-    print("  STAGE: Post-login — looking for stream switcher")
-    print(f"  URL  : {page.url}")
+    print("  STAGE: Post-login — profile page (Change stream / class / board)")
     print("=" * 70)
 
-    # Stream keywords
-    stream_keywords = ["JEE", "NEET", "Class 6", "Classes 6", "6-10", "Stream", "stream"]
-    print("\n  Elements containing stream keywords:")
+    _goto_profile(page)
+    _dismiss_optional_overlays(page)
+    print(f"\n  URL  : {page.url}")
+
+    loc = page.locator(PROFILE_CHANGE_BUTTON)
+    try:
+        n = loc.count()
+    except Exception:
+        n = 0
+    print(f"\n  PROFILE_CHANGE_BUTTON matches: {n}")
+    for i in range(min(n, 12)):
+        el = loc.nth(i)
+        try:
+            if not el.is_visible():
+                continue
+        except Exception:
+            continue
+        try:
+            tag = el.evaluate("el => el.tagName.toLowerCase()")
+            text = el.inner_text()[:80].strip().replace("\n", " ")
+            attrs = {
+                a: el.get_attribute(a)
+                for a in ("class", "id", "data-testid", "aria-label", "role", "href")
+            }
+            print(f"    [{i}] <{tag}> text={text!r}  attrs={attrs}")
+        except Exception as exc:
+            print(f"    [{i}] (could not describe element: {exc})")
+
+    # Stream / class keywords on profile (popup opens only after Change — keyword scan still helps)
+    stream_keywords = ["JEE", "NEET", "Class 6", "Classes 6", "6-10", "Stream", "Board", "Change"]
+    print("\n  Elements containing stream / profile keywords (visible slice):")
     for kw in stream_keywords:
         found = page.query_selector_all(
             f"button:has-text('{kw}'), a:has-text('{kw}'), "
@@ -254,18 +311,74 @@ def _dump_post_login_stream_switcher(page: Page) -> None:
         if found:
             print(f"  Keyword {kw!r}: {len(found)} match(es)")
             for el in found[:3]:
-                tag  = el.evaluate("el => el.tagName.toLowerCase()")
+                try:
+                    if not el.is_visible():
+                        continue
+                except Exception:
+                    pass
+                tag = el.evaluate("el => el.tagName.toLowerCase()")
                 text = el.inner_text()[:60].strip().replace("\n", " ")
-                attrs = {a: el.get_attribute(a) for a in ["class", "id", "data-value", "data-stream", "href"]}
+                attrs = {
+                    a: el.get_attribute(a)
+                    for a in ["class", "id", "data-value", "data-stream", "href"]
+                }
                 print(f"      <{tag}> text={text!r}  attrs={attrs}")
 
-    # Also dump nav / header buttons that might be the switcher
-    print("\n  Nav / header buttons (possible switcher triggers):")
-    nav_btns = page.query_selector_all("header button, nav button, [role='navigation'] button")
-    for el in nav_btns[:10]:
-        text = el.inner_text()[:60].strip().replace("\n", " ")
-        attrs = {a: el.get_attribute(a) for a in ["class", "id", "aria-label"]}
-        print(f"    text={text!r:40s}  {attrs}")
+
+def _normalize_discover_profile_stream(raw: str) -> Optional[str]:
+    t = raw.strip()
+    if not t:
+        return None
+    for key in PROFILE_STREAM_LABELS:
+        if t.upper() == key.upper():
+            return key
+    compact = t.replace(" ", "").replace("–", "-").lower()
+    if compact in ("classes6-10", "class6-10", "6-10"):
+        return "Classes610"
+    return None
+
+
+def _run_discover_profile_switch_if_configured(page: Page) -> None:
+    """
+    If ``WATCHDOG_DISCOVER_PROFILE_STREAM`` is set, run the same Change flow as
+    ``AuthSession.switch_profile`` to validate selectors end-to-end.
+    """
+    raw = os.environ.get("WATCHDOG_DISCOVER_PROFILE_STREAM", "").strip()
+    if not raw:
+        return
+    stream = _normalize_discover_profile_stream(raw)
+    if stream is None:
+        print(
+            "\n  ✗ WATCHDOG_DISCOVER_PROFILE_STREAM="
+            f"{raw!r} — use JEE, NEET, or Classes610 (aliases: 6-10, class 6-10)."
+        )
+        return
+
+    if not logging.getLogger().handlers:
+        logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+
+    cls = os.environ.get("WATCHDOG_PROFILE_CLASS", "").strip()
+    brd = os.environ.get("WATCHDOG_PROFILE_BOARD", "").strip()
+    print("\n" + "=" * 70)
+    print(f"  STAGE: Live profile switch — stream={stream!r}")
+    if cls:
+        print(f"  WATCHDOG_PROFILE_CLASS={cls!r}")
+    if brd:
+        print(f"  WATCHDOG_PROFILE_BOARD={brd!r}")
+    print("=" * 70)
+
+    try:
+        run_profile_change_flow(page, stream)
+    except Exception as exc:
+        print(f"\n  ✗ Profile switch failed: {exc}")
+        return
+
+    print(f"\n  ✓ Profile change flow finished (no exception). URL: {page.url}")
+    try:
+        snippet = page.locator("body").inner_text(timeout=8_000)[:500].replace("\n", " ")
+        print(f"  Body text preview (500 chars): {snippet!r}")
+    except Exception as exc:
+        print(f"  (Could not read body preview: {exc})")
 
 
 # ---------------------------------------------------------------------------
@@ -389,15 +502,19 @@ def main() -> None:
         logged_in = not (nav_btn and nav_btn.is_visible())
         print(f"  Login success (nav Login btn gone): {logged_in}")
 
-        # ── Step 4: Post-login — stream switcher ────────────────────────────
+        # ── Step 4: Post-login — /profile Change UI ─────────────────────────
         if logged_in:
-            _dump_post_login_stream_switcher(page)
+            _dump_post_login_profile_change(page)
+            _run_discover_profile_switch_if_configured(page)
 
         print("\n" + "=" * 70)
         print("  DISCOVERY COMPLETE")
         print("  Copy the selectors above into auth_session.py constants:")
-        print("    LOGIN_URL, FORM_ID_SELECTOR, PASSWORD_SELECTOR,")
-        print("    SUBMIT_SELECTOR, LOGIN_SUCCESS_INDICATORS, STREAM_SELECTORS")
+        print("    NAV_LOGIN_BUTTON, FORM_ID_FIELD_SELECTORS, PASSWORD_INNER,")
+        print("    SUBMIT_BUTTON_SELECTORS, PROFILE_PAGE_URL, PROFILE_CHANGE_BUTTON,")
+        print("    PROFILE_STREAM_LABELS")
+        print("  Optional live switch: WATCHDOG_DISCOVER_PROFILE_STREAM=JEE|NEET|Classes610")
+        print("    (+ WATCHDOG_PROFILE_CLASS / WATCHDOG_PROFILE_BOARD as needed)")
         print("=" * 70)
 
         browser.close()
