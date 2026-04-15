@@ -253,49 +253,102 @@ def main() -> None:
         _dump_all_links(page)
 
         # ── Step 2: Click nav "Login" button to open modal ──────────────────
+        # allen.in pre-renders modal buttons in DOM (hidden). Buttons like
+        # FormIdLoginButtonWeb exist BEFORE the click — two copies each
+        # (desktop + mobile). We must click nav Login first, WAIT for the
+        # visible instance, then click only the visible copy.
         print("\nStep 2: Opening login modal...")
         try:
-            page.click("button[data-testid='loginCtaButton']", timeout=10_000)
-            page.wait_for_selector("button[data-testid='FormIdLoginButtonWeb']", timeout=10_000)
-            print("  ✓ Modal opened — 'Continue with Form ID' button visible")
+            # The nav button itself has two copies too — wait for visible one
+            nav_btn = page.locator("button[data-testid='loginCtaButton']")
+            nav_btn.first.wait_for(state="visible", timeout=10_000)
+            nav_btn.first.click(timeout=10_000)
+            print("  ✓ Clicked nav Login button — waiting for modal animation...")
         except Exception as e:
-            print(f"  ✗ Could not open modal: {e}")
+            print(f"  ✗ Could not click nav Login button: {e}")
 
-        _dump_page_state(page, "Login modal (before choosing flow)")
+        # Wait for FormIdLoginButtonWeb to become VISIBLE (not just in DOM)
+        # before reporting — this is the reliable signal the modal is open.
+        try:
+            form_id_btn = page.locator("button[data-testid='FormIdLoginButtonWeb']")
+            form_id_btn.first.wait_for(state="visible", timeout=8_000)
+            print("  ✓ Modal open confirmed — FormIdLoginButtonWeb is visible")
+        except Exception as e:
+            print(f"  ✗ Modal did not open (FormIdLoginButtonWeb never became visible): {e}")
 
-        # ── Step 3: Click "Continue with Form ID" ───────────────────────────
+        # Report which modal buttons are now visible
+        for testid in ["submitOTPButton", "FormIdLoginButtonWeb", "usernameLoginButtonWeb"]:
+            loc = page.locator(f"button[data-testid='{testid}']")
+            count = loc.count()
+            visible = sum(1 for i in range(count) if loc.nth(i).is_visible())
+            print(f"  {testid}: {count} in DOM, {visible} visible")
+
+        # ── Step 3: Click "Continue with Form ID" (first VISIBLE instance) ──
+        # The locator already points to the visible one after wait_for above;
+        # click it directly.
         print("\nStep 3: Switching to Form ID flow...")
         try:
-            page.click("button[data-testid='FormIdLoginButtonWeb']", timeout=5_000)
-            time.sleep(1)
-            print("  ✓ Clicked 'Continue with Form ID'")
+            form_id_btn = page.locator("button[data-testid='FormIdLoginButtonWeb']")
+            form_id_btn.first.wait_for(state="visible", timeout=8_000)
+            form_id_btn.first.click(timeout=8_000)
+            time.sleep(0.6)  # form transition animation
+            print("  ✓ Clicked 'Continue with Form ID' (first visible)")
         except Exception as e:
             print(f"  ✗ Could not click Form ID button: {e}")
 
         _dump_page_state(page, ">>> After 'Continue with Form ID' — COPY THESE INPUT SELECTORS <<<")
 
-        # ── Step 4: Fill credentials and submit ─────────────────────────────
-        print("\nStep 4: Filling Form ID credentials...")
-        form_id_sel = "input[name='formId'], input[placeholder*='Form ID'], input[placeholder*='form id'], input[type='text']:visible"
-        pass_sel    = "input[type='password']"
-        submit_sel  = "button[type='submit'], button:has-text('Login'), button:has-text('Sign In')"
+        # ── Step 4: Fill credentials using .first to avoid homepage fields ───
+        print("\nStep 4: Filling Form ID credentials (using .first locator)...")
 
-        try:
-            page.fill(form_id_sel, creds["form_id"], timeout=5_000)
-            print("  ✓ Filled form_id")
-        except Exception as e:
-            print(f"  ✗ Could not fill form_id: {e}")
+        # Try known form_id selectors — check which one is visible now
+        form_id_candidates = [
+            "input[name='formId']",
+            "input[id='formId']",
+            "input[placeholder*='Form ID']",
+            "input[placeholder*='form id']",
+            "input[placeholder*='Form Id']",
+            "input[type='text']",  # last resort, use .first
+        ]
+        form_id_sel_used = None
+        for sel in form_id_candidates:
+            loc = page.locator(sel)
+            count = loc.count()
+            if count > 0:
+                vis = sum(1 for i in range(count) if loc.nth(i).is_visible())
+                print(f"  Candidate {sel!r}: {count} in DOM, {vis} visible")
+                if vis > 0 and form_id_sel_used is None:
+                    form_id_sel_used = sel
 
-        try:
-            page.fill(pass_sel, creds["password"], timeout=5_000)
-            print("  ✓ Filled password")
-        except Exception as e:
-            print(f"  ✗ Could not fill password: {e}")
+        if form_id_sel_used:
+            try:
+                page.locator(form_id_sel_used).first.fill(creds["form_id"], timeout=5_000)
+                print(f"  ✓ Filled form_id using .first of {form_id_sel_used!r}")
+            except Exception as e:
+                print(f"  ✗ Could not fill form_id: {e}")
+        else:
+            print("  ✗ No visible form_id input found")
 
+        # Check for password field
+        pass_loc = page.locator("input[type='password']")
+        pass_count = pass_loc.count()
+        pass_visible = sum(1 for i in range(pass_count) if pass_loc.nth(i).is_visible())
+        print(f"  Password inputs: {pass_count} in DOM, {pass_visible} visible")
+        if pass_visible > 0:
+            try:
+                pass_loc.first.fill(creds["password"], timeout=5_000)
+                print("  ✓ Filled password")
+            except Exception as e:
+                print(f"  ✗ Could not fill password: {e}")
+        else:
+            print("  (password field not yet visible — may appear after form_id step)")
+
+        # Submit
+        submit_loc = page.locator("button[type='submit'], button:has-text('Login'), button:has-text('Sign In')")
         try:
-            page.click(submit_sel, timeout=5_000)
+            submit_loc.first.click(timeout=5_000)
             page.wait_for_load_state("networkidle", timeout=15_000)
-            print("  ✓ Submitted login form")
+            print("  ✓ Submitted")
         except Exception as e:
             print(f"  ✗ Could not submit: {e}")
 

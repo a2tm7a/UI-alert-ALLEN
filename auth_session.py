@@ -165,25 +165,48 @@ class AuthSession:
                 # Step 1 — land on homepage
                 self.page.goto(BASE_URL, wait_until="networkidle", timeout=30_000)
 
-                # Step 2 — open the login modal
-                self.page.click(NAV_LOGIN_BUTTON, timeout=10_000)
-                # Wait for the "Continue with Form ID" button to confirm modal opened
-                self.page.wait_for_selector(FORM_ID_FLOW_BUTTON, timeout=10_000)
+                # Step 2 — open the login modal.
+                # allen.in pre-renders modal buttons in the DOM (hidden) — there are
+                # TWO instances of each modal button (desktop + mobile). We must:
+                #   a) wait for the nav Login button to be visible before clicking it
+                #   b) wait for FormIdLoginButtonWeb to become VISIBLE (not just in
+                #      the DOM) before clicking it — that's the reliable signal the
+                #      modal is fully open.
+                nav_btn_loc = self.page.locator(NAV_LOGIN_BUTTON)
+                nav_btn_loc.first.wait_for(state="visible", timeout=10_000)
+                nav_btn_loc.first.click(timeout=10_000)
+                logging.info("[AUTH] Nav Login button clicked.")
+
+                # Wait for the modal to open by checking visibility of the Form ID
+                # flow button — more reliable than a fixed sleep.
+                form_id_flow_loc = self.page.locator(FORM_ID_FLOW_BUTTON)
+                form_id_flow_loc.first.wait_for(state="visible", timeout=8_000)
                 logging.info("[AUTH] Login modal opened.")
 
-                # Step 3 — switch to Form ID flow
-                self.page.click(FORM_ID_FLOW_BUTTON, timeout=5_000)
-                # Wait for the form_id input to appear
-                self.page.wait_for_selector(FORM_ID_INPUT, timeout=10_000)
+                # Step 3 — click "Continue with Form ID" (now confirmed visible)
+                form_id_flow_loc.first.click(timeout=8_000)
+                time.sleep(0.5)  # allow form transition animation
                 logging.info("[AUTH] Form ID flow selected.")
 
-                # Step 4 — fill credentials
-                self.page.fill(FORM_ID_INPUT, self._creds["form_id"])
-                self.page.fill(PASSWORD_SELECTOR, self._creds["password"])
-                self.page.click(SUBMIT_SELECTOR)
+                # Step 4 — fill Form ID.
+                # After clicking "Continue with Form ID", a form_id input appears inside
+                # the modal. Use .first to avoid matching the homepage FullName field.
+                self.page.locator(FORM_ID_INPUT).first.fill(
+                    self._creds["form_id"], timeout=8_000
+                )
+
+                # Step 5 — fill password (only appears after form_id is entered on some
+                # sites; if it's a two-step flow, wait briefly first)
+                time.sleep(0.3)
+                self.page.locator(PASSWORD_SELECTOR).first.fill(
+                    self._creds["password"], timeout=8_000
+                )
+
+                # Step 6 — submit (first visible submit button in the modal)
+                self.page.locator(SUBMIT_SELECTOR).first.click(timeout=8_000)
                 self.page.wait_for_load_state("networkidle", timeout=30_000)
 
-                # Step 5 — confirm login
+                # Step 7 — confirm login
                 if self._is_logged_in():
                     self._logged_in = True
                     logging.info("[AUTH] Login confirmed. URL: %s", self.page.url)
