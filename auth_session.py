@@ -94,6 +94,22 @@ STREAM_SELECTORS: dict[str, str] = {
 PROFILE_SWITCH_BASE_URL = "https://allen.in"
 
 
+def _goto_spa_no_networkidle(page: Page, url: str) -> None:
+    """
+    Open *url* without wait_until=networkidle.
+
+    Marketing SPAs (allen.in) keep sockets / beacons open; networkidle can hang
+    until Playwright hits the navigation timeout even when the UI is usable.
+    """
+    timeout_ms = int(os.environ.get("WATCHDOG_GOTO_TIMEOUT_MS", "60000"))
+    page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+    try:
+        page.wait_for_load_state("load", timeout=min(25_000, timeout_ms))
+    except Exception:
+        pass
+    time.sleep(0.4)
+
+
 def _dismiss_optional_overlays(page: Page) -> None:
     """Close cookie / CMP banners that sit above the login modal (best-effort)."""
     candidates = (
@@ -190,8 +206,8 @@ class AuthSession:
 
         for attempt in range(1, 4):
             try:
-                # Step 1 — land on homepage
-                self.page.goto(BASE_URL, wait_until="networkidle", timeout=30_000)
+                # Step 1 — land on homepage (avoid networkidle — see _goto_spa_no_networkidle)
+                _goto_spa_no_networkidle(self.page, BASE_URL)
                 _dismiss_optional_overlays(self.page)
 
                 if attempt > 1:
@@ -255,7 +271,11 @@ class AuthSession:
 
                 # Step 6 — submit (first visible submit button in the modal)
                 self.page.locator(SUBMIT_SELECTOR).first.click(timeout=15_000)
-                self.page.wait_for_load_state("networkidle", timeout=30_000)
+                try:
+                    self.page.wait_for_load_state("load", timeout=30_000)
+                except Exception:
+                    pass
+                time.sleep(0.5)
 
                 # Step 7 — confirm login
                 if self._is_logged_in():
@@ -302,9 +322,13 @@ class AuthSession:
         logging.info("[AUTH] Switching to stream profile: %s", stream)
         selector = STREAM_SELECTORS[stream]
 
-        self.page.goto(PROFILE_SWITCH_BASE_URL, wait_until="networkidle", timeout=30_000)
-        self.page.click(selector, timeout=10_000)
-        self.page.wait_for_load_state("networkidle", timeout=30_000)
+        _goto_spa_no_networkidle(self.page, PROFILE_SWITCH_BASE_URL)
+        self.page.locator(selector).first.click(timeout=10_000)
+        try:
+            self.page.wait_for_load_state("load", timeout=30_000)
+        except Exception:
+            pass
+        time.sleep(0.4)
         logging.info("[AUTH] Profile switched to %s. URL: %s", stream, self.page.url)
 
     def close(self) -> None:

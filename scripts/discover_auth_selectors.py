@@ -12,6 +12,9 @@ Usage:
 
 Set HEADLESS=0 to watch the browser live:
     HEADLESS=0 python3 scripts/discover_auth_selectors.py
+
+Navigation uses domcontentloaded+load (not networkidle). Override ms if needed:
+    WATCHDOG_GOTO_TIMEOUT_MS=90000 python3 scripts/discover_auth_selectors.py
 """
 
 import os
@@ -26,6 +29,34 @@ from playwright_stealth import Stealth
 STEALTH   = Stealth()
 HEADLESS  = os.environ.get("HEADLESS", "1") != "0"
 BASE_URL  = "https://allen.in"
+# allen.in keeps long-lived connections; networkidle often never fires.
+DEFAULT_GOTO_TIMEOUT_MS = 60_000
+
+
+def _goto_allen_home(page: Page) -> None:
+    """
+    Load the homepage without wait_until=networkidle (SPAs + analytics hang it).
+
+    Uses domcontentloaded + load, optional short settle, then waits for the
+    nav Login CTA when present so downstream steps do not race a blank shell.
+    """
+    timeout_ms = int(os.environ.get("WATCHDOG_GOTO_TIMEOUT_MS", str(DEFAULT_GOTO_TIMEOUT_MS)))
+    page.goto(BASE_URL, wait_until="domcontentloaded", timeout=timeout_ms)
+    try:
+        page.wait_for_load_state("load", timeout=min(25_000, timeout_ms))
+    except Exception:
+        pass
+    time.sleep(0.8)
+    try:
+        page.locator("button[data-testid='loginCtaButton']").first.wait_for(
+            state="visible",
+            timeout=25_000,
+        )
+    except Exception:
+        print(
+            "  ⚠ Nav Login CTA not visible within 25s — page may be blocked or "
+            "selectors changed; continuing with dump anyway."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -248,7 +279,7 @@ def main() -> None:
 
         # ── Step 1: Homepage ────────────────────────────────────────────────
         print(f"\nNavigating to {BASE_URL} ...")
-        page.goto(BASE_URL, wait_until="networkidle", timeout=30_000)
+        _goto_allen_home(page)
         _dump_page_state(page, "Homepage (before sign-in click)")
         _dump_all_links(page)
 
@@ -271,7 +302,7 @@ def main() -> None:
         # before reporting — this is the reliable signal the modal is open.
         try:
             form_id_btn = page.locator("button[data-testid='FormIdLoginButtonWeb']")
-            form_id_btn.first.wait_for(state="visible", timeout=8_000)
+            form_id_btn.first.wait_for(state="visible", timeout=25_000)
             print("  ✓ Modal open confirmed — FormIdLoginButtonWeb is visible")
         except Exception as e:
             print(f"  ✗ Modal did not open (FormIdLoginButtonWeb never became visible): {e}")
@@ -289,8 +320,8 @@ def main() -> None:
         print("\nStep 3: Switching to Form ID flow...")
         try:
             form_id_btn = page.locator("button[data-testid='FormIdLoginButtonWeb']")
-            form_id_btn.first.wait_for(state="visible", timeout=8_000)
-            form_id_btn.first.click(timeout=8_000)
+            form_id_btn.first.wait_for(state="visible", timeout=25_000)
+            form_id_btn.first.click(timeout=15_000)
             time.sleep(0.6)  # form transition animation
             print("  ✓ Clicked 'Continue with Form ID' (first visible)")
         except Exception as e:
@@ -347,7 +378,11 @@ def main() -> None:
         submit_loc = page.locator("button[type='submit'], button:has-text('Login'), button:has-text('Sign In')")
         try:
             submit_loc.first.click(timeout=5_000)
-            page.wait_for_load_state("networkidle", timeout=15_000)
+            try:
+                page.wait_for_load_state("load", timeout=25_000)
+            except Exception:
+                pass
+            time.sleep(1.0)
             print("  ✓ Submitted")
         except Exception as e:
             print(f"  ✗ Could not submit: {e}")
