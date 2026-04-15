@@ -1,0 +1,21 @@
+version: 1
+
+# ---------------------------------------------------------------------------
+# Minimal config for initial testing — Homepage only.
+# ---------------------------------------------------------------------------
+auth_sessions:
+  - stream: JEE
+    class: "11th"
+
+  - stream: NEET
+    class: "12th Plus"
+
+  - stream: "Class 6-10"
+    class: "8th"
+    board: CBSE
+
+urls:
+  # --- Home ---
+  - url: https://allen.in/
+    section: HOME
+    streams: [JEE, NEET, "Class 6-10"]
