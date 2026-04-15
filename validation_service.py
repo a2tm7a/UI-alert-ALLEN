@@ -5,8 +5,11 @@ Orchestrates validation rules and manages validation results.
 
 import sqlite3
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, TYPE_CHECKING
 from validators import BaseValidator, ValidationResult, PurchaseCTAValidator, PriceMismatchValidator
+
+if TYPE_CHECKING:
+    from check_config import CheckConfig
 
 
 class ValidationService:
@@ -34,35 +37,47 @@ class ValidationService:
 
         return cta
     
-    def validate_course(self, course_data: Dict[str, Any]) -> List[ValidationResult]:
+    def validate_course(
+        self,
+        course_data: Dict[str, Any],
+        check_config: "Optional[Any]" = None,
+    ) -> List[ValidationResult]:
         """
         Validate a single course record.
-        
-        Args:
-            course_data: Dictionary containing course information
-            
-        Returns:
-            List of ValidationResult objects
+
+        If check_config is provided, filters results to only those check types
+        enabled for the course's base_url per the config.
         """
-        return self.validator_chain.validate(course_data)
+        raw = self.validator_chain.validate(course_data)
+        if check_config is None:
+            return raw
+        base_url = course_data.get("base_url", "")
+        enabled = check_config.enabled_checks_for(base_url)
+        return [r for r in raw if r.type in enabled]
     
-    def validate_all_courses(self, run_id: Optional[int] = None) -> List[ValidationResult]:
+    def validate_all_courses(
+        self,
+        run_id: Optional[int] = None,
+        check_config: "Optional[Any]" = None,
+    ) -> List[ValidationResult]:
         """
         Validate courses in the database.
-        
+
         Args:
             run_id: If provided, only courses belonging to this specific run
                     will be validated. If omitted, all courses are validated.
-                         
+            check_config: If provided, filters each course's results to only
+                    those check types enabled for its base_url.
+
         Returns:
             List of all ValidationResult objects found
         """
         all_issues = []
-        
+
         with sqlite3.connect(self.db_name) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            
+
             if run_id is not None:
                 cursor.execute("SELECT * FROM courses WHERE run_id = ?", (run_id,))
             else:
@@ -70,7 +85,7 @@ class ValidationService:
 
             for row in cursor.fetchall():
                 course_data = dict(row)
-                issues = self.validate_course(course_data)
+                issues = self.validate_course(course_data, check_config=check_config)
                 # Stamp each result with the viewport from its DB row
                 viewport = course_data.get('viewport', 'desktop')
                 for issue in issues:
