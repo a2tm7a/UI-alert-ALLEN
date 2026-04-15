@@ -93,8 +93,8 @@ STREAM_SELECTORS: dict[str, str] = {
 # URL to land on before switching profile
 PROFILE_SWITCH_BASE_URL = "https://allen.in"
 
-# Promo / survey layers often appear ~3–5s after first paint; wait before Login.
-POST_LOAD_LATE_POPUP_SEC = 4.0
+# Promo / survey layers appear after first paint; wait before opening Login.
+POST_LOAD_LATE_POPUP_SEC = 12.0
 
 
 def _goto_spa_no_networkidle(page: Page, url: str) -> None:

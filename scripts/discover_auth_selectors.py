@@ -26,7 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from playwright.sync_api import sync_playwright, Page
 from playwright_stealth import Stealth
 
-from auth_session import _dismiss_optional_overlays
+from auth_session import POST_LOAD_LATE_POPUP_SEC, _dismiss_optional_overlays
 
 STEALTH   = Stealth()
 HEADLESS  = os.environ.get("HEADLESS", "1") != "0"
@@ -39,8 +39,8 @@ def _goto_allen_home(page: Page) -> None:
     """
     Load the homepage without wait_until=networkidle (SPAs + analytics hang it).
 
-    Uses domcontentloaded + load, optional short settle, then waits for the
-    nav Login CTA when present so downstream steps do not race a blank shell.
+    Uses domcontentloaded + load, then POST_LOAD_LATE_POPUP_SEC sleep, overlay
+    dismiss, then waits for the nav Login CTA when present.
     """
     timeout_ms = int(os.environ.get("WATCHDOG_GOTO_TIMEOUT_MS", str(DEFAULT_GOTO_TIMEOUT_MS)))
     page.goto(BASE_URL, wait_until="domcontentloaded", timeout=timeout_ms)
@@ -48,8 +48,7 @@ def _goto_allen_home(page: Page) -> None:
         page.wait_for_load_state("load", timeout=min(25_000, timeout_ms))
     except Exception:
         pass
-    # Late promo / survey popups (~3–5s after shell load)
-    time.sleep(4.0)
+    time.sleep(POST_LOAD_LATE_POPUP_SEC)
     _dismiss_optional_overlays(page)
     try:
         page.locator("button[data-testid='loginCtaButton']").first.wait_for(

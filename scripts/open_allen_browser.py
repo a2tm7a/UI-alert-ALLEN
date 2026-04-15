@@ -2,8 +2,8 @@
 """
 Open allen.in in a normal Chromium window so you can see what the site does.
 
-Waits ~4s for the late homepage popup, dismisses common overlays, clicks Login,
-then waits until you press Enter.
+Waits for the late homepage popup (see `POST_LOAD_LATE_POPUP_SEC` in auth_session),
+dismisses common overlays, clicks Login, then waits until you press Enter.
 
   python3 scripts/open_allen_browser.py
 
@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from playwright.sync_api import sync_playwright
 from playwright_stealth import Stealth
 
-from auth_session import _dismiss_optional_overlays
+from auth_session import POST_LOAD_LATE_POPUP_SEC, _dismiss_optional_overlays
 
 STEALTH = Stealth()
 URL = os.environ.get("WATCHDOG_DEBUG_URL", "https://allen.in")
@@ -38,8 +38,8 @@ def main() -> None:
         STEALTH.apply_stealth_sync(context)
         page = context.new_page()
         page.goto(URL, wait_until="domcontentloaded", timeout=30_000)
-        print("Navigation finished. Waiting ~4s for delayed popup…")
-        time.sleep(4.0)
+        print(f"Navigation finished. Waiting {POST_LOAD_LATE_POPUP_SEC:.0f}s for delayed popup…")
+        time.sleep(POST_LOAD_LATE_POPUP_SEC)
         _dismiss_optional_overlays(page)
         nav = page.locator("button[data-testid='loginCtaButton']")
         nav.first.wait_for(state="visible", timeout=10_000)
