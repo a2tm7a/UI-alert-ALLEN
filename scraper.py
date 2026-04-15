@@ -46,7 +46,7 @@ from handlers import (  # type: ignore[import]
     WATCHDOG_ARTIFACT_DIR,
 )
 from validation_service import ValidationService  # type: ignore[import]
-from check_config import CheckConfig  # type: ignore[import]
+from url_config import UrlConfig                  # type: ignore[import]
 from report_generator import ReportGenerator      # type: ignore[import]
 from email_service import EmailService            # type: ignore[import]
 from auth_session import AuthSession              # type: ignore[import]
@@ -71,8 +71,6 @@ logging.basicConfig(
 MOBILE_DEVICE = "iPhone XR"  # logical resolution 390x844, touch, mobile Safari UA
 STEALTH = Stealth()
 
-# Stream profiles for authenticated scraping (Phase 2)
-AUTH_PROFILES = ["JEE", "NEET", "Classes610"]
 
 
 # ---------------------------------------------------------------------------
@@ -80,8 +78,8 @@ AUTH_PROFILES = ["JEE", "NEET", "Classes610"]
 # ---------------------------------------------------------------------------
 
 class ScraperEngine:
-    def __init__(self, urls_file="urls.txt"):
-        self.urls_file = urls_file
+    def __init__(self, config_file: str = "config/urls.yaml"):
+        self.config_file = config_file
         self.db = DatabaseManager()
         self.handler_map = {
             "HOME":          HomepageHandler,
@@ -91,27 +89,11 @@ class ScraperEngine:
         }
 
     def parse_urls(self) -> List[Tuple[str, str]]:
-        """Parse urls.txt into a list of (page_type, url) tuples."""
-        tasks: List[Tuple[str, str]] = []
-        current_type: Optional[str] = None
-
-        if not os.path.exists(self.urls_file):
-            logging.error(f"URL file {self.urls_file} missing.")
-            return []
-
-        with open(self.urls_file, "r") as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                header_match = re.match(r"^\[(.*?)\]$", line)
-                if header_match is not None:  # narrow Optional[re.Match] -> re.Match
-                    current_type = header_match.group(1).upper()
-                elif line.startswith("http"):
-                    if current_type is not None:  # pyre-fixme[5]: narrow str | None -> str
-                        tasks.append((current_type, line))
-                    else:
-                        logging.warning(f"URL found without category: {line}")
+        """Return all (section, url) pairs from config/urls.yaml for the guest pass."""
+        url_config = UrlConfig.load(self.config_file)
+        tasks = url_config.get_all_tasks()
+        if not tasks:
+            logging.error("URL config %s is missing or empty.", self.config_file)
         return tasks
 
     def _run_viewport(
@@ -415,9 +397,8 @@ class ScraperEngine:
 
         logging.info("")
         logging.info("Running validation checks across all viewports...")
-        check_config = CheckConfig.load("config/url_checks.yaml")
         validator = ValidationService(self.db.db_name)
-        first_pass_issues = validator.validate_all_courses(run_id=run_id, check_config=check_config)
+        first_pass_issues = validator.validate_all_courses(run_id=run_id)
         first_pass_count  = len(first_pass_issues)
         validator.log_results()
 
@@ -439,7 +420,7 @@ class ScraperEngine:
         logging.info("")
         logging.info("[RECHECK] Running final validation after re-check pass...")
         final_validator = ValidationService(self.db.db_name)
-        final_pass_issues = final_validator.validate_all_courses(run_id=run_id, check_config=check_config)
+        final_pass_issues = final_validator.validate_all_courses(run_id=run_id)
         final_pass_count  = len(final_pass_issues)
         final_validator.log_results()
 
@@ -471,10 +452,12 @@ class ScraperEngine:
         )
 
         # -----------------------------------------------------------------------
-        # Phase 2 — Authenticated mode: one run per stream profile
+        # Phase 2 — Authenticated mode: one run per stream × class session
         # -----------------------------------------------------------------------
+        url_config = UrlConfig.load(self.config_file)
+        auth_sessions = url_config.auth_sessions
         logging.info("")
-        logging.info("Starting authenticated runs (%d profiles)...", len(AUTH_PROFILES))
+        logging.info("Starting authenticated runs (%d sessions)...", len(auth_sessions))
 
         with sync_playwright() as p_auth:
             mobile_kwargs_auth = dict(p_auth.devices[MOBILE_DEVICE])
@@ -496,19 +479,30 @@ class ScraperEngine:
                 logging.error("[AUTH] Login failed — skipping all authenticated runs: %s", login_err)
                 auth_browser.close()
             else:
-                for profile in AUTH_PROFILES:
+                for auth_sess in auth_sessions:
+                    profile_label = f"{auth_sess.stream}/{auth_sess.class_}"
+                    auth_tasks = url_config.get_tasks_for_stream(auth_sess.stream)
+                    if not auth_tasks:
+                        logging.info("[AUTH:%s] No URLs tagged for stream — skipping.", profile_label)
+                        continue
+
                     logging.info("")
-                    logging.info("=== Authenticated run: %s ===", profile)
+                    logging.info("=== Authenticated run: %s ===", profile_label)
 
                     try:
-                        session.switch_profile(profile)
+                        os.environ["WATCHDOG_PROFILE_CLASS"] = auth_sess.class_
+                        if auth_sess.stream == "Class 6-10":
+                            os.environ["WATCHDOG_PROFILE_BOARD"] = auth_sess.board
+                        session.switch_profile(auth_sess.auth_profile)
                     except Exception as switch_err:
                         logging.error(
-                            "[AUTH:%s] Profile switch failed — skipping: %s", profile, switch_err
+                            "[AUTH:%s] Profile switch failed — skipping: %s", profile_label, switch_err
                         )
                         continue
 
-                    auth_run_id   = self.db.create_run(mode="authenticated", profile=profile)
+                    # Use only stream-relevant URLs for this session
+                    tasks = auth_tasks  # type: ignore[assignment]
+                    auth_run_id   = self.db.create_run(mode="authenticated", profile=profile_label)
                     auth_cache    = PdpCache()  # fresh cache per profile — no guest bleed
                     auth_start    = datetime.now()
 

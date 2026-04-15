@@ -404,21 +404,21 @@ This phase introduces a YAML config file read at runtime. No secrets are stored 
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Should the config support section-level defaults (e.g., all `RESULTS_PAGES` get `CTA_BROKEN` only)?**
    - What we know: Results pages are the primary use case for non-default checks; there are 10 of them in `urls.txt`
    - What's unclear: Whether section-level keys (matching `urls.txt` section tags) would be more ergonomic than listing 10 URLs individually
-   - Recommendation: Start with per-URL keys (simpler, more explicit). A `sections:` block can be added later if the URL list grows large. The 10-URL list is manageable and explicit.
+   - **RESOLVED: Start with per-URL keys** — simpler, more explicit. A `sections:` block can be added later if the URL list grows large. The 10-URL list is manageable and explicit.
 
 2. **Should `enabled: []` (empty list) be valid — disabling all checks for a URL?**
    - What we know: `aiot-register` is a registration page with no course cards
    - What's unclear: Whether completely skipping validation for a URL is intentional or an accidental misconfiguration
-   - Recommendation: Allow `enabled: []` but log an INFO message: "All checks disabled for URL X — skipping validation". This documents intent without blocking the run.
+   - **RESOLVED: Allow `enabled: []` silently** — no INFO logging. An empty list is a valid explicit operator decision. The Pydantic model accepts it; `enabled_checks_for()` returns an empty set; `validate_course()` filters out all results. Silent is correct because the operator knowingly opted out.
 
 3. **Should the config be hot-reloaded between runs or read once at startup?**
    - What we know: WatchDog runs as a single-process nightly job (not a daemon)
-   - Recommendation: Read once at `ScraperEngine.__init__()` or at the start of `run()`. No hot-reload needed.
+   - **RESOLVED: Load once in `ScraperEngine.run()`** — not in `__init__()`. Loading in `run()` means a fresh config read on every invocation without requiring a new process instance. No hot-reload needed between runs.
 
 ---
 

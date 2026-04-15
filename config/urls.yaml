@@ -1,0 +1,185 @@
+version: 1
+
+# ---------------------------------------------------------------------------
+# Auth sessions — executed in order after the guest pass.
+# Login happens once per session; all URLs tagged for that stream are checked.
+# class_ matches the UI pill text on allen.in/profile (e.g. "11th", "8th").
+# board is only required for Class 6-10 (CBSE by default).
+# ---------------------------------------------------------------------------
+auth_sessions:
+  # JEE
+  - stream: JEE
+    class: "11th"
+  - stream: JEE
+    class: "12th"
+  - stream: JEE
+    class: "12th Plus"
+
+  # NEET
+  - stream: NEET
+    class: "11th"
+  - stream: NEET
+    class: "12th"
+  - stream: NEET
+    class: "12th Plus"
+
+  # Class 6-10 (board: CBSE)
+  - stream: "Class 6-10"
+    class: "6th"
+    board: CBSE
+  - stream: "Class 6-10"
+    class: "7th"
+    board: CBSE
+  - stream: "Class 6-10"
+    class: "8th"
+    board: CBSE
+  - stream: "Class 6-10"
+    class: "9th"
+    board: CBSE
+  - stream: "Class 6-10"
+    class: "10th"
+    board: CBSE
+
+# ---------------------------------------------------------------------------
+# URLs — all are tested in guest mode.
+# streams: [] (or absent) means guest-only.
+# streams: [JEE] means also tested in every JEE auth session.
+# A URL can belong to multiple streams: [JEE, NEET]
+# ---------------------------------------------------------------------------
+urls:
+  # --- Home ---
+  - url: https://allen.in/
+    section: HOME
+
+  # --- PLP pages ---
+  - url: https://allen.in/jee/online-coaching-class-11
+    section: PLP_PAGES
+    streams: [JEE]
+
+  - url: https://allen.in/jee/online-coaching-class-12
+    section: PLP_PAGES
+    streams: [JEE]
+
+  - url: https://allen.in/jee/online-coaching-class-12-droppers
+    section: PLP_PAGES
+    streams: [JEE]
+
+  - url: https://allen.in/neet/online-coaching-class-11
+    section: PLP_PAGES
+    streams: [NEET]
+
+  - url: https://allen.in/neet/online-coaching-class-12
+    section: PLP_PAGES
+    streams: [NEET]
+
+  - url: https://allen.in/neet/online-coaching-class-12-droppers
+    section: PLP_PAGES
+    streams: [NEET]
+
+  - url: https://allen.in/class-6
+    section: PLP_PAGES
+    streams: ["Class 6-10"]
+
+  - url: https://allen.in/class-7
+    section: PLP_PAGES
+    streams: ["Class 6-10"]
+
+  - url: https://allen.in/class-8
+    section: PLP_PAGES
+    streams: ["Class 6-10"]
+
+  - url: https://allen.in/class-9
+    section: PLP_PAGES
+    streams: ["Class 6-10"]
+
+  - url: https://allen.in/class-10
+    section: PLP_PAGES
+    streams: ["Class 6-10"]
+
+  # --- Stream pages ---
+  - url: https://allen.in/jee
+    section: STREAM_PAGES
+    streams: [JEE]
+
+  - url: https://allen.in/neet
+    section: STREAM_PAGES
+    streams: [NEET]
+
+  - url: https://allen.in/classes-6-10
+    section: STREAM_PAGES
+    streams: ["Class 6-10"]
+
+  - url: https://allen.in/jee/online-test-series
+    section: STREAM_PAGES
+    streams: [JEE]
+
+  - url: https://allen.in/neet/online-test-series
+    section: STREAM_PAGES
+    streams: [NEET]
+
+  - url: https://allen.in/jee-main/online-test-series
+    section: STREAM_PAGES
+    streams: [JEE]
+
+  - url: https://allen.in/class-6-10/pncf-supplemental-courses
+    section: STREAM_PAGES
+    streams: ["Class 6-10"]
+
+  - url: https://allen.in/aiot-register
+    section: STREAM_PAGES
+    # guest only — registration page
+
+  - url: https://allen.in/international-olympiads
+    section: STREAM_PAGES
+    # guest only — general overview page
+
+  - url: https://allen.in/international-olympiads/class-8
+    section: STREAM_PAGES
+    streams: ["Class 6-10"]
+
+  - url: https://allen.in/international-olympiads/class-9
+    section: STREAM_PAGES
+    streams: ["Class 6-10"]
+
+  - url: https://allen.in/international-olympiads/class-10
+    section: STREAM_PAGES
+    streams: ["Class 6-10"]
+
+  - url: https://allen.in/international-olympiads/class-11
+    section: STREAM_PAGES
+    # guest only
+
+  - url: https://allen.in/international-olympiads/class-12
+    section: STREAM_PAGES
+    # guest only
+
+  # --- Results pages (guest only — alumni cards, no purchasable content) ---
+  - url: https://allen.in/neet/result-2025
+    section: RESULTS_PAGES
+
+  - url: https://allen.in/neet/results-2024
+    section: RESULTS_PAGES
+
+  - url: https://allen.in/neet/results-2023
+    section: RESULTS_PAGES
+
+  - url: https://allen.in/neet/results-2022
+    section: RESULTS_PAGES
+
+  - url: https://allen.in/jee/results-2026
+    section: RESULTS_PAGES
+
+  - url: https://allen.in/jee/results-2025
+    section: RESULTS_PAGES
+
+  - url: https://allen.in/jee/results-2024
+    section: RESULTS_PAGES
+
+  - url: https://allen.in/jee/results-2023
+    section: RESULTS_PAGES
+
+  - url: https://allen.in/jee/results-2022
+    section: RESULTS_PAGES
+
+  - url: https://allen.in/classes-6-10/results
+    section: RESULTS_PAGES
