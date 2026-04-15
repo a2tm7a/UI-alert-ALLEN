@@ -5,6 +5,7 @@ Reports are saved to the reports/ directory with a timestamp in the filename.
 """
 
 import os
+import re
 import sqlite3
 import logging
 from datetime import datetime
@@ -72,6 +73,30 @@ class ReportGenerator:
 
         logging.info(f"Report saved → {filepath}")
         return filepath
+
+    def build_markdown(self, section_label: str = "") -> str:
+        """
+        Return this report as a Markdown subsection string, ready to be
+        embedded inside a combined report document.
+
+        All h2 (##) headings are shifted to h3 (###) so the caller can nest
+        this content under a top-level combined # heading.
+        The standalone "# WatchDog Run Report" title line is stripped.
+
+        Args:
+            section_label: Label for the ## section heading
+                           (e.g. "Guest Pass", "Authenticated — JEE / 11th").
+                           If empty, no heading is prepended.
+        """
+        raw = self._build_report()
+        # Shift ## → ###
+        shifted = re.sub(r"^## ", "### ", raw, flags=re.MULTILINE)
+        # Remove the standalone top-level title line and the blank line after it
+        shifted = re.sub(r"^# WatchDog Run Report\n+", "", shifted)
+        body = shifted.lstrip()
+        if section_label:
+            return f"## {section_label}\n\n{body}"
+        return body
 
     # ------------------------------------------------------------------
     # Report building

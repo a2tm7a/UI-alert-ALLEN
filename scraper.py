@@ -47,7 +47,7 @@ from handlers import (  # type: ignore[import]
 )
 from validation_service import ValidationService  # type: ignore[import]
 from url_config import UrlConfig                  # type: ignore[import]
-from report_generator import ReportGenerator      # type: ignore[import]
+from report_generator import ReportGenerator, REPORTS_DIR  # type: ignore[import]
 from email_service import EmailService            # type: ignore[import]
 from auth import AuthSession
 
@@ -431,7 +431,7 @@ class ScraperEngine:
             f"Cleared on recheck: {cleared_count}"
         )
 
-        report_file = ReportGenerator(
+        guest_rg = ReportGenerator(
             validation_service=final_validator,
             db_name=self.db.db_name,
             start_time=start_time,
@@ -442,14 +442,9 @@ class ScraperEngine:
                 "final_pass_issues":  final_pass_count,
                 "cleared_on_recheck": cleared_count,
             },
-        ).save()
-
-        EmailService().send_report(
-            report_path=report_file,
-            validation_summary=final_validator.get_summary(),
-            run_id=run_id,
-            start_time=start_time,
         )
+        # Collect report sections; write one combined file at the end.
+        report_sections: list[str] = [guest_rg.build_markdown("Guest Pass")]
 
         # -----------------------------------------------------------------------
         # Phase 2 — Authenticated mode: one run per stream × class session
@@ -542,9 +537,9 @@ class ScraperEngine:
                             try:
                                 fut.result()
                             except Exception as e:
-                                logging.error("[AUTH:%s][%s] Viewport failed: %s", profile, lbl.upper(), e)
+                                logging.error("[AUTH:%s][%s] Viewport failed: %s", profile_label, lbl.upper(), e)
 
-                    logging.info("[AUTH:%s] Validating...", profile)
+                    logging.info("[AUTH:%s] Validating...", profile_label)
                     auth_validator = ValidationService(self.db.db_name)
                     auth_issues    = auth_validator.validate_all_courses(run_id=auth_run_id)
                     auth_validator.log_results()
@@ -555,7 +550,7 @@ class ScraperEngine:
                     if auth_recheck_count:
                         logging.info(
                             "[AUTH:%s] Re-QC: re-scraping %d failing pairs...",
-                            profile, auth_recheck_count,
+                            profile_label, auth_recheck_count,
                         )
                         recheck_cache = ProgressTracker()
                         with ThreadPoolExecutor(max_workers=2) as rpool:
@@ -571,7 +566,7 @@ class ScraperEngine:
                                 try:
                                     rfut.result()
                                 except Exception as re:
-                                    logging.error("[AUTH:%s] Re-QC viewport failed: %s", profile, re)
+                                    logging.error("[AUTH:%s] Re-QC viewport failed: %s", profile_label, re)
 
                         final_validator = ValidationService(self.db.db_name)
                         auth_recheck_issues = final_validator.validate_all_courses(run_id=auth_run_id)
@@ -585,7 +580,8 @@ class ScraperEngine:
                         "cleared_on_recheck": max(0, len(auth_issues) - len(auth_recheck_issues)),
                     } if auth_recheck_count else {}
 
-                    auth_report_path = ReportGenerator(
+                    section_label = f"Authenticated — {auth_sess.stream} / {auth_sess.class_}"
+                    auth_rg = ReportGenerator(
                         validation_service=_report_validator,
                         db_name=self.db.db_name,
                         start_time=auth_start,
@@ -593,21 +589,38 @@ class ScraperEngine:
                         run_id=auth_run_id,
                         recheck_stats=auth_recheck_stats,
                         mode="authenticated",
-                        profile=profile,
-                    ).save()
-                    logging.info("[AUTH:%s] Report: %s", profile, auth_report_path)
-
-                    auth_email = EmailService()
-                    auth_email.send_report(
-                        report_path=auth_report_path,
-                        validation_summary=_report_validator.get_summary(),
-                        run_id=auth_run_id,
-                        start_time=auth_start,
-                        profile=profile,
+                        profile=profile_label,
                     )
+                    report_sections.append(auth_rg.build_markdown(section_label))
+                    logging.info("[AUTH:%s] Section collected for combined report.", profile_label)
 
                 session.close()
                 auth_browser.close()
+
+        # -----------------------------------------------------------------------
+        # Save one combined report and send one email
+        # -----------------------------------------------------------------------
+        os.makedirs(REPORTS_DIR, exist_ok=True)
+        combined_path = os.path.join(
+            REPORTS_DIR, start_time.strftime("report_%Y-%m-%d_%H-%M-%S.md")
+        )
+        combined_content = (
+            f"# WatchDog Run Report\n\n"
+            f"_Generated: {start_time.strftime('%Y-%m-%d %H:%M:%S')} · "
+            f"{len(report_sections)} section(s)_\n\n"
+            + "\n\n---\n\n".join(report_sections)
+            + "\n"
+        )
+        with open(combined_path, "w", encoding="utf-8") as f:
+            f.write(combined_content)
+        logging.info("Report saved → %s", combined_path)
+
+        EmailService().send_report(
+            report_path=combined_path,
+            validation_summary=final_validator.get_summary(),
+            run_id=run_id,
+            start_time=start_time,
+        )
 
 
 if __name__ == "__main__":
