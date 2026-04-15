@@ -125,25 +125,22 @@ def _dismiss_optional_overlays(page: Page) -> None:
         "[aria-label='Close']",
         "button[aria-label='Close']",
     )
-    dismiss_hits: list[str] = []
     for sel in candidates:
         try:
             loc = page.locator(sel).first
             if loc.is_visible(timeout=600):
                 loc.click(timeout=2_000)
-                dismiss_hits.append(sel)
                 time.sleep(0.25)
         except Exception:
             continue
 
-    # allen.in promo: full-viewport DIV[data-testid="dialog"] (bg-overlay) sits above
-    # the nav Login CTA — confirmed via elementFromPoint (debug H1).
+    # allen.in promo: full-viewport DIV[data-testid="dialog"] (bg-overlay) can sit above
+    # the nav Login CTA.
     try:
         page.keyboard.press("Escape")
         time.sleep(0.2)
         page.keyboard.press("Escape")
         time.sleep(0.2)
-        dismiss_hits.append("keyboard:Escape(x2)")
     except Exception:
         pass
 
@@ -163,32 +160,12 @@ def _dismiss_optional_overlays(page: Page) -> None:
                     loc = page.locator(sel).first
                     if loc.is_visible(timeout=500):
                         loc.click(timeout=2_000)
-                        dismiss_hits.append(sel)
                         time.sleep(0.35)
                         break
                 except Exception:
                     continue
     except Exception:
         pass
-
-    # region agent log
-    try:
-        import json
-
-        log_path = "/Users/amitmanchanda/Amit M./Verification-Agent/.cursor/debug-01c224.log"
-        payload = {
-            "sessionId": "01c224",
-            "timestamp": int(time.time() * 1000),
-            "location": "auth_session.py:_dismiss_optional_overlays",
-            "message": "dismiss_done",
-            "data": {"clicked_selectors": dismiss_hits, "url": page.url},
-            "hypothesisId": "H3",
-        }
-        with open(log_path, "a", encoding="utf-8") as lf:
-            lf.write(json.dumps(payload, default=str) + "\n")
-    except Exception:
-        pass
-    # endregion
 
 
 # ---------------------------------------------------------------------------
