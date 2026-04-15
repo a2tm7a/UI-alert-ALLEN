@@ -46,8 +46,16 @@ BASE_URL = "https://allen.in"
 # Step 1: Nav "Login" button that opens the modal
 NAV_LOGIN_BUTTON = "button[data-testid='loginCtaButton']"
 
-# Step 2: "Continue with Form ID" button inside the modal
-FORM_ID_FLOW_BUTTON = "button[data-testid='FormIdLoginButtonWeb']"
+# Step 2: "Continue with Form ID" inside the modal (site may rename testids).
+FORM_ID_FLOW_BUTTON = (
+    "button[data-testid='FormIdLoginButtonWeb'], "
+    "button[data-testid*='FormIdLogin'], "
+    "button:has-text('Continue with Form ID'), "
+    "button:has-text('Form ID')"
+)
+
+# Headless allen.in can be slow; 8s was too tight for modal paint + hydration.
+_AUTH_MODAL_OPEN_MS = int(os.environ.get("WATCHDOG_AUTH_MODAL_MS", "25000"))
 
 # Step 3: Form ID input (appears after clicking Continue with Form ID)
 # TODO: confirm selector by running discover_auth_selectors.py and clicking
@@ -84,6 +92,26 @@ STREAM_SELECTORS: dict[str, str] = {
 
 # URL to land on before switching profile
 PROFILE_SWITCH_BASE_URL = "https://allen.in"
+
+
+def _dismiss_optional_overlays(page: Page) -> None:
+    """Close cookie / CMP banners that sit above the login modal (best-effort)."""
+    candidates = (
+        "button:has-text('Accept')",
+        "button:has-text('Accept all')",
+        "button:has-text('I understand')",
+        "button:has-text('Agree')",
+        "[aria-label='Close']",
+        "button[aria-label='Close']",
+    )
+    for sel in candidates:
+        try:
+            loc = page.locator(sel).first
+            if loc.is_visible(timeout=600):
+                loc.click(timeout=2_000)
+                time.sleep(0.25)
+        except Exception:
+            continue
 
 
 # ---------------------------------------------------------------------------
@@ -164,27 +192,50 @@ class AuthSession:
             try:
                 # Step 1 — land on homepage
                 self.page.goto(BASE_URL, wait_until="networkidle", timeout=30_000)
+                _dismiss_optional_overlays(self.page)
+
+                if attempt > 1:
+                    # Clear a stuck modal / overlay from a previous failed attempt
+                    for _ in range(2):
+                        self.page.keyboard.press("Escape")
+                        time.sleep(0.2)
 
                 # Step 2 — open the login modal.
                 # allen.in pre-renders modal buttons in the DOM (hidden) — there are
                 # TWO instances of each modal button (desktop + mobile). We must:
                 #   a) wait for the nav Login button to be visible before clicking it
-                #   b) wait for FormIdLoginButtonWeb to become VISIBLE (not just in
-                #      the DOM) before clicking it — that's the reliable signal the
-                #      modal is fully open.
+                #   b) wait for Form ID entry in the modal to become VISIBLE before
+                #      clicking — allow extra time for hydration in headless mode.
                 nav_btn_loc = self.page.locator(NAV_LOGIN_BUTTON)
-                nav_btn_loc.first.wait_for(state="visible", timeout=10_000)
-                nav_btn_loc.first.click(timeout=10_000)
+                nav_btn_loc.first.wait_for(state="visible", timeout=15_000)
+                nav_btn_loc.first.click(timeout=15_000)
                 logging.info("[AUTH] Nav Login button clicked.")
 
-                # Wait for the modal to open by checking visibility of the Form ID
-                # flow button — more reliable than a fixed sleep.
+                # Optional: dialog shell (not all builds use role=dialog).
+                try:
+                    self.page.locator('[role="dialog"]').first.wait_for(
+                        state="visible", timeout=min(12_000, _AUTH_MODAL_OPEN_MS)
+                    )
+                except Exception:
+                    pass
+
                 form_id_flow_loc = self.page.locator(FORM_ID_FLOW_BUTTON)
-                form_id_flow_loc.first.wait_for(state="visible", timeout=8_000)
+                try:
+                    form_id_flow_loc.first.wait_for(
+                        state="visible", timeout=_AUTH_MODAL_OPEN_MS
+                    )
+                except Exception as wait_exc:
+                    n = form_id_flow_loc.count()
+                    logging.warning(
+                        "[AUTH] Form ID flow control not visible (matches=%s): %s",
+                        n,
+                        wait_exc,
+                    )
+                    raise
                 logging.info("[AUTH] Login modal opened.")
 
                 # Step 3 — click "Continue with Form ID" (now confirmed visible)
-                form_id_flow_loc.first.click(timeout=8_000)
+                form_id_flow_loc.first.click(timeout=15_000)
                 time.sleep(0.5)  # allow form transition animation
                 logging.info("[AUTH] Form ID flow selected.")
 
@@ -192,18 +243,18 @@ class AuthSession:
                 # After clicking "Continue with Form ID", a form_id input appears inside
                 # the modal. Use .first to avoid matching the homepage FullName field.
                 self.page.locator(FORM_ID_INPUT).first.fill(
-                    self._creds["form_id"], timeout=8_000
+                    self._creds["form_id"], timeout=15_000
                 )
 
                 # Step 5 — fill password (only appears after form_id is entered on some
                 # sites; if it's a two-step flow, wait briefly first)
                 time.sleep(0.3)
                 self.page.locator(PASSWORD_SELECTOR).first.fill(
-                    self._creds["password"], timeout=8_000
+                    self._creds["password"], timeout=15_000
                 )
 
                 # Step 6 — submit (first visible submit button in the modal)
-                self.page.locator(SUBMIT_SELECTOR).first.click(timeout=8_000)
+                self.page.locator(SUBMIT_SELECTOR).first.click(timeout=15_000)
                 self.page.wait_for_load_state("networkidle", timeout=30_000)
 
                 # Step 7 — confirm login
