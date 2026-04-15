@@ -616,13 +616,13 @@ def _write_profile_debug_bundle(
     try:
         with open(txt_path, "w", encoding="utf-8") as f:
             f.write("\n".join(chunks))
-        logging.info("[AUTH][profile] Wrote debug transcript: %s", txt_path)
+        logging.debug("[AUTH][profile] Wrote debug transcript: %s", txt_path)
     except Exception as err:
         logging.warning("[AUTH][profile] Could not write transcript: %s", err)
     try:
         png_path = stub + ".png"
         page.screenshot(path=png_path, full_page=True)
-        logging.info("[AUTH][profile] Wrote debug screenshot: %s", png_path)
+        logging.debug("[AUTH][profile] Wrote debug screenshot: %s", png_path)
     except Exception as err:
         logging.warning("[AUTH][profile] Screenshot failed: %s", err)
 
@@ -864,27 +864,27 @@ def run_profile_change_flow(page: Page, stream: str) -> None:
         )
 
     # ── Step 1 + 2: navigate to /profile and open Change modal ──────────────
-    logging.info("[AUTH][profile] Starting change flow: stream=%s", stream)
+    logging.debug("[AUTH][profile] Starting change flow: stream=%s", stream)
     _goto_spa_no_networkidle(page, PROFILE_PAGE_URL)
     time.sleep(0.3)
     _dismiss_optional_overlays(page)
     _open_profile_change_modal(page)
 
     # ── Step 3: select stream ────────────────────────────────────────────────
-    logging.info("[AUTH][profile] Step 3 — selecting stream: %s", stream)
+    logging.debug("[AUTH][profile] Step 3 — selecting stream: %s", stream)
     _select_stream_in_change_flow(page, stream)
-    logging.info("[AUTH][profile] Stream selected: %s", stream)
+    logging.debug("[AUTH][profile] Stream selected: %s", stream)
 
     # ── Step 4 + 5: wait for class pills, then select class ──────────────────
     cls = os.environ.get("WATCHDOG_PROFILE_CLASS", "").strip()
     if cls:
-        logging.info("[AUTH][profile] Step 4 — waiting for class pills...")
+        logging.debug("[AUTH][profile] Step 4 — waiting for class pills...")
         _wait_for_class_pills_after_stream_change(page, cls)
-        logging.info("[AUTH][profile] Step 5 — selecting class: %s", cls)
+        logging.debug("[AUTH][profile] Step 5 — selecting class: %s", cls)
         _click_preference_modal_pill(_active_profile_dialog(page), cls)
-        logging.info("[AUTH][profile] Class selected: %s", cls)
+        logging.debug("[AUTH][profile] Class selected: %s", cls)
     else:
-        logging.info(
+        logging.warning(
             "[AUTH][profile] WATCHDOG_PROFILE_CLASS not set — skipping class selection"
         )
         time.sleep(0.35)
@@ -892,32 +892,32 @@ def run_profile_change_flow(page: Page, stream: str) -> None:
     # ── Step 6 + 7: board (Classes610 only) ─────────────────────────────────
     if stream == "Classes610":
         brd = os.environ.get("WATCHDOG_PROFILE_BOARD", "CBSE").strip()
-        logging.info("[AUTH][profile] Step 6 — waiting for board pills (board=%s)...", brd)
+        logging.debug("[AUTH][profile] Step 6 — waiting for board pills (board=%s)...", brd)
         _wait_for_board_pills_after_class_change(page, brd)
-        logging.info("[AUTH][profile] Step 7 — selecting board: %s", brd)
+        logging.debug("[AUTH][profile] Step 7 — selecting board: %s", brd)
         try:
             _click_preference_modal_pill(_active_profile_dialog(page), brd)
-            logging.info("[AUTH][profile] Board selected: %s", brd)
+            logging.debug("[AUTH][profile] Board selected: %s", brd)
         except Exception as exc:
             logging.warning(
                 "[AUTH][profile] Board selection %r failed (continuing to Save): %s",
                 brd, exc,
             )
     else:
-        logging.info(
+        logging.debug(
             "[AUTH][profile] Board step skipped (only applies to Classes610, got %s)",
             stream,
         )
 
     # ── Step 8: Save ─────────────────────────────────────────────────────────
-    logging.info("[AUTH][profile] Step 8 — clicking Save")
+    logging.debug("[AUTH][profile] Step 8 — clicking Save")
     _click_profile_wizard_save(page)
     try:
         page.wait_for_load_state("load", timeout=30_000)
     except Exception:
         pass
     time.sleep(0.4)
-    logging.info(
+    logging.debug(
         "[AUTH][profile] Change flow complete: stream=%s class=%r board=%r url=%s",
         stream,
         cls or "(not set)",
@@ -934,7 +934,7 @@ def _auth_debug_screenshot(page: Page, tag: str) -> None:
     path = os.path.join(reports, f"auth-debug-{tag}-{int(time.time())}.png")
     try:
         page.screenshot(path=path, full_page=True)
-        logging.info("[AUTH] Debug screenshot written: %s", path)
+        logging.debug("[AUTH] Debug screenshot written: %s", path)
     except Exception as exc:
         logging.warning("[AUTH] Debug screenshot failed: %s", exc)
 
@@ -996,10 +996,10 @@ class AuthSession:
 
     def _auth_trace(self, attempt: int, step: str) -> None:
         if self.page is None or self.page.is_closed():
-            logging.info("[AUTH][trace] attempt=%s step=%s page=closed", attempt, step)
+            logging.debug("[AUTH][trace] attempt=%s step=%s page=closed", attempt, step)
             return
         snap = _auth_ui_snapshot(self.page)
-        logging.info(
+        logging.debug(
             "[AUTH][trace] attempt=%s step=%s url=%s snapshot=%s",
             attempt,
             step,
@@ -1032,7 +1032,7 @@ class AuthSession:
                 # Step 1 — land on homepage (avoid networkidle — see _goto_spa_no_networkidle)
                 last_step = "goto_home"
                 _goto_spa_no_networkidle(self.page, BASE_URL)
-                logging.info(
+                logging.debug(
                     "[AUTH] Waiting %.1fs for late homepage popup…",
                     POST_LOAD_LATE_POPUP_SEC,
                 )
@@ -1057,7 +1057,7 @@ class AuthSession:
                 nav_btn_loc = self.page.locator(NAV_LOGIN_BUTTON)
                 nav_btn_loc.first.wait_for(state="visible", timeout=15_000)
                 nav_btn_loc.first.click(timeout=15_000)
-                logging.info("[AUTH] Nav Login button clicked.")
+                logging.debug("[AUTH] Nav Login button clicked.")
                 self._auth_trace(attempt, last_step)
 
                 last_step = "wait_login_drawer"
@@ -1066,13 +1066,13 @@ class AuthSession:
 
                 # Step 3 — first *visible* + *enabled* Continue-with-Form-ID (skip hidden duplicates).
                 last_step = "click_form_id_flow"
-                logging.info(
+                logging.debug(
                     "[AUTH] Polling for visible Continue-with-Form-ID (budget=%sms)…",
                     _form_id_flow_budget_ms(),
                 )
                 click_visible_form_id_flow_button(login_drawer)
                 time.sleep(0.5)  # allow form transition animation
-                logging.info("[AUTH] Form ID flow selected (visible Continue-with-Form-ID clicked).")
+                logging.debug("[AUTH] Form ID flow selected (visible Continue-with-Form-ID clicked).")
                 self._auth_trace(attempt, last_step)
 
                 # Step 4–6 — credential panel (picker controls may have unmounted).
